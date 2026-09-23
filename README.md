@@ -155,9 +155,34 @@ agent brief > memory > prose, most enforceable tier that fits). It proposes; it 
 whether eng-task still POSTs its topology (without that, the gate has no door), and whether
 enforcement is on with enough runs behind it to trust the rule. Same data renders in the UI.
 
-## Not built yet
+## Scheduled jobs
 
-- Observed edges are derived from timing, not from a parent/child link the harness does not
-  provide: B's predecessor is the last node that had finished when B started, and overlapping
-  nodes get no edge at all.
-- Nothing schedules `/graph-harvest`. It runs on demand.
+Three launch agents, all logging under `~/.graphd/logs/`:
+
+| Label | When | What |
+| --- | --- | --- |
+| `com.chrisliu.graphd` | always | the daemon on `127.0.0.1:8787` |
+| `com.chrisliu.graphd-import` | hourly | backfills nodes and interventions from transcripts |
+| `com.chrisliu.graphd-harvest` | Mondays 08:45 | `bin/run-harvest.sh` — refreshes the store, runs `/lesson-harvest` headless, files proposals pending |
+
+`run-harvest.sh` pins its model rather than inheriting the default, which moves ahead of
+whatever CLI version is installed and fails the whole run with a 400 when it does.
+
+## Known limits
+
+- Observed edges are derived from timing, not from a parent/child link: B's predecessor is the
+  last node that had finished when B started. Nodes that overlap something get no incoming edge,
+  which is deliberate — it is what makes a real fan-out visibly edgeless, and `delegationBatches`
+  reads that shape. Real parentage is blocked on the harness rather than on this tool: `nodes`
+  has a `parent_node_id` column and nothing to populate it with. Spawn records carry a session
+  UUID while agent results carry a 17-character hex `agent_id`, with no join between them, and
+  every transcript entry reports `isSidechain: false`, so an agent's own turns cannot be told
+  apart from its parent's.
+- Spend is a floor. Token counts arrive as one total per node with no input/output split, so
+  `graph stats` prices at an assumed 90% input share and prints the all-input/all-output bounds
+  beside the estimate.
+- Nodes predating the `totalTokens` field contribute zero to spend and are not excluded from the
+  totals, so the estimate is low by whatever they cost.
+- The importer measures only real work: transcripts whose working directory is test scratch
+  (romp's suite replays recorded turns through a scratch checkout) are skipped, and the skip
+  count is printed on every import.
