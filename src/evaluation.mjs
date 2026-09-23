@@ -46,15 +46,25 @@ export const INTERVENTION_THEMES = [
 function humanInterventions(store) {
   return store
     .prepare(
-      `SELECT ts, kind, quote, preceding_tool, run_id FROM interventions
+      `SELECT ts, kind, quote, followup_quote, preceding_tool, run_id FROM interventions
         WHERE kind != 'self_correction' ORDER BY ts`,
     )
     .all();
 }
 
-/** Whether an intervention records why the human stepped in. A bare interrupt does not. */
-export function hasReason(quote) {
-  return typeof quote === "string" && !quote.includes(BARE_INTERRUPT_MARKER);
+/** Whether a quote is a bare stop with no text of its own. */
+export function checkIsBareInterrupt(quote) {
+  return typeof quote !== "string" || quote.includes(BARE_INTERRUPT_MARKER);
+}
+
+/**
+ * Why the human stepped in, or null when nothing says.
+ * Stopping and saying what was wrong are two turns, so a bare interrupt's reason is the text of
+ * the turn that followed it.
+ */
+export function reasonFor(intervention) {
+  if (!checkIsBareInterrupt(intervention?.quote)) return intervention.quote;
+  return intervention?.followup_quote ?? null;
 }
 
 /**
@@ -64,11 +74,13 @@ export function hasReason(quote) {
  */
 export function interventionQuality(store) {
   const interventions = humanInterventions(store);
-  const withReason = interventions.filter((row) => hasReason(row.quote));
-  const deduped = new Set(withReason.map((row) => (row.quote ?? "").trim())).size;
+  const withReason = interventions.filter((row) => reasonFor(row) !== null);
+  const deduped = new Set(withReason.map((row) => reasonFor(row).trim())).size;
+  const statedInTheNextTurn = withReason.filter((row) => checkIsBareInterrupt(row.quote)).length;
   return {
     total: interventions.length,
     bareInterrupts: interventions.length - withReason.length,
+    statedInTheNextTurn,
     withReason: withReason.length,
     distinctReasons: deduped,
     duplicateReasons: withReason.length - deduped,
@@ -125,13 +137,13 @@ export function recentStoppedCommands(store, limit = RECENT_STOP_LIMIT) {
 
 /** The interventions that carry a reason, bucketed by theme. Unmatched ones are reported too. */
 export function themeBreakdown(store) {
-  const withReason = humanInterventions(store).filter((row) => hasReason(row.quote));
+  const withReason = humanInterventions(store).filter((row) => reasonFor(row) !== null);
   const counts = INTERVENTION_THEMES.map((theme) => ({
     ...theme,
-    count: withReason.filter((row) => theme.pattern.test(row.quote ?? "")).length,
+    count: withReason.filter((row) => theme.pattern.test(reasonFor(row))).length,
   }));
   const matchedAny = withReason.filter((row) =>
-    INTERVENTION_THEMES.some((theme) => theme.pattern.test(row.quote ?? "")),
+    INTERVENTION_THEMES.some((theme) => theme.pattern.test(reasonFor(row))),
   ).length;
   return { themes: counts.sort((left, right) => right.count - left.count), sampleSize: withReason.length, unmatched: withReason.length - matchedAny };
 }
@@ -142,7 +154,7 @@ export function themeBreakdown(store) {
  * built on a handful of quotes reads as evidence while carrying none.
  */
 export function ruleEvaluationPower(store, nowMs = Date.now()) {
-  const withReason = humanInterventions(store).filter((row) => hasReason(row.quote));
+  const withReason = humanInterventions(store).filter((row) => reasonFor(row) !== null);
   const acceptedRules = readProposals().filter(
     (proposal) => proposal.status === "accepted" && proposal.kind === "rule",
   );

@@ -164,9 +164,12 @@ a week of many short sessions lowers the per-session rate without any autonomy g
 series disagreeing is the interesting case.
 
 Three quarters of interventions are a bare `[Request interrupted by user]` with no text, so the
-tool name is otherwise the whole record. `interventions.preceding_detail` keeps the command or path
-that was interrupted, and `graph eval` groups those by command shape — wrappers like `rtk proxy`
-and a leading `cd` are stripped so the same behavior lands in one bucket.
+tool name is otherwise the whole record. Two columns recover what it was about.
+`interventions.preceding_detail` keeps the command or path that was interrupted, grouped by
+command shape with wrappers like `rtk proxy` and a leading `cd` stripped.
+`interventions.followup_quote` keeps the next human turn: stopping and saying what was wrong are
+two turns, so the reason for a stop is written on the turn after it. That recovers 35 of 39 stops
+and takes the reasoned sample from 12 to 47, past the threshold where a rule can be graded.
 
 Messages to a running agent are recorded too, in `resumptions`. A sub-agent cannot prompt a human,
 so when it needs one it reports back and is resumed with `SendMessage`; none of that round trip

@@ -11,8 +11,10 @@ import {
 } from "../src/db.mjs";
 import { parseTaskNotifications } from "../src/tasknotify.mjs";
 import {
+  INTERVENTION_KINDS,
   classifyAssistantText,
   classifyHumanTurn,
+  followupReason,
   matchedSentence,
   summarizeToolInput,
   toQuote,
@@ -83,6 +85,7 @@ function parseTranscript(path) {
   const entries = [];
   let lastToolName = null;
   let lastToolDetail = null;
+  const awaitingReason = [];
   const session = { id: null, cwd: null, startedAt: null, endedAt: null, turnCount: 0 };
 
   for (const line of readFileSync(path, "utf8").split("\n")) {
@@ -106,6 +109,13 @@ function parseTranscript(path) {
 
     if (entry.type === "user" && !entry.isSidechain) {
       const kind = classifyHumanTurn(entry.message?.content);
+      if (kind !== INTERVENTION_KINDS.INTERRUPT && awaitingReason.length > 0) {
+        const reason = followupReason(entry.message?.content);
+        if (reason) {
+          for (const pending of awaitingReason) pending.followupQuote = reason;
+          awaitingReason.length = 0;
+        }
+      }
       if (kind) {
         interventions.push({
           id: entry.uuid,
@@ -116,7 +126,11 @@ function parseTranscript(path) {
           quote: toQuote(entry.message.content),
           precedingTool: lastToolName,
           precedingDetail: lastToolDetail,
+          followupQuote: null,
         });
+        if (kind === INTERVENTION_KINDS.INTERRUPT) {
+          awaitingReason.push(interventions[interventions.length - 1]);
+        }
       }
     }
     if (entry.type === "assistant" && !entry.isSidechain) {
@@ -274,8 +288,8 @@ function insertIntervention(store, intervention) {
   store
     .prepare(
       `INSERT INTO interventions
-         (id, run_id, cwd, ts, kind, quote, preceding_tool, preceding_detail)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         (id, run_id, cwd, ts, kind, quote, preceding_tool, preceding_detail, followup_quote)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO NOTHING`,
     )
     .run(
@@ -287,6 +301,7 @@ function insertIntervention(store, intervention) {
       intervention.quote,
       intervention.precedingTool,
       intervention.precedingDetail ?? null,
+      intervention.followupQuote ?? null,
     );
 }
 

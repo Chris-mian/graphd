@@ -14,6 +14,7 @@ const MACHINE_PREFIXES = [
   "This session is being continued",
 ];
 const OPENING_WINDOW = 90;
+const MINIMUM_REASON_LENGTH = 12;
 
 /** romp recap blocks quote earlier turns verbatim; counting them double-counts one event. */
 const SESSION_MANAGER_RECAP_PATTERN =
@@ -24,6 +25,13 @@ const SESSION_MANAGER_RECAP_PATTERN =
  * reporting an agent finished; a quoted reply repeats a turn already counted where it was said.
  */
 const NOT_A_HUMAN_TURN_PATTERN = /<task-notification>|^Replying to this part of the conversation:/i;
+
+/**
+ * Turns that carry text but state no reason: a slash command, and the boilerplate that resumes a
+ * compacted session. Both follow an interrupt often enough to be read as its cause.
+ */
+const NOT_A_REASON_PATTERN =
+  /<\/command-name>|^\/[a-z-]+\b|^Continue from where you left off|^This session is being continued/i;
 
 export const INTERVENTION_KINDS = {
   INTERRUPT: "interrupt",
@@ -102,6 +110,24 @@ export function classifyHumanTurn(rawContent) {
   return matchesAny(CORRECTION_PATTERNS, text.slice(0, OPENING_WINDOW))
     ? INTERVENTION_KINDS.CORRECTION
     : null;
+}
+
+/**
+ * The reason text in a human turn, or null when the turn carries none.
+ * A bare interrupt records no reason, but the turn that follows it usually says what was
+ * wrong, so that turn is the reason for the stop before it.
+ */
+export function followupReason(rawContent) {
+  const raw = contentText(rawContent);
+  if (raw.includes(INTERRUPT_MARKER)) return null;
+  if (SESSION_MANAGER_RECAP_PATTERN.test(raw)) return null;
+  if (NOT_A_HUMAN_TURN_PATTERN.test(raw)) return null;
+  const text = humanText(rawContent);
+  if (!text || text.length < MINIMUM_REASON_LENGTH) return null;
+  if (MACHINE_PREFIXES.some((prefix) => text.startsWith(prefix))) return null;
+  if (text.startsWith(">")) return null;
+  if (NOT_A_REASON_PATTERN.test(raw) || NOT_A_REASON_PATTERN.test(text)) return null;
+  return toQuote(text);
 }
 
 /** Classifies assistant text as a self-correction, or null. */

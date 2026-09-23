@@ -6,14 +6,15 @@ import { join } from "node:path";
 import {
   autonomyPerWorkload,
   bareInterruptSurfaces,
-  hasReason,
+  checkIsBareInterrupt,
   interventionQuality,
+  reasonFor,
   recentStoppedCommands,
   stoppedCommandShapes,
   themeBreakdown,
   weeklyTurns,
 } from "../src/evaluation.mjs";
-import { commandShape, summarizeToolInput } from "../src/interventions.mjs";
+import { commandShape, followupReason, summarizeToolInput } from "../src/interventions.mjs";
 
 const BARE = "[Request interrupted by user]";
 
@@ -40,10 +41,10 @@ function addIntervention(store, intervention) {
     );
 }
 
-test("a bare interrupt carries no reason and a typed turn does", () => {
-  assert.equal(hasReason(BARE), false);
-  assert.equal(hasReason("[Request interrupted by user for tool use]"), false);
-  assert.equal(hasReason("no, that is the wrong table"), true);
+test("a bare interrupt carries no text of its own and a typed turn does", () => {
+  assert.equal(checkIsBareInterrupt(BARE), true);
+  assert.equal(checkIsBareInterrupt("[Request interrupted by user for tool use]"), true);
+  assert.equal(checkIsBareInterrupt("no, that is the wrong table"), false);
 });
 
 test("quality separates the reasonless stops from the ones that say why", () => {
@@ -206,4 +207,40 @@ test("a week with no recorded turns reports no rate rather than a zero", () => {
     [],
   );
   assert.equal(combined[0].per100Turns, null);
+});
+
+test("a bare interrupt's reason is the text of the turn that followed it", () => {
+  const store = freshStore();
+  store
+    .prepare(
+      `INSERT INTO interventions
+         (id, run_id, cwd, ts, kind, quote, preceding_tool, preceding_detail, followup_quote)
+       VALUES ('a', 'run-1', NULL, '2026-09-01T00:00:00Z', 'interrupt', ?, 'Bash', NULL, ?)`,
+    )
+    .run(BARE, "stop polling, run it in the background");
+
+  const quality = interventionQuality(store);
+  assert.equal(quality.withReason, 1);
+  assert.equal(quality.bareInterrupts, 0);
+  assert.equal(quality.statedInTheNextTurn, 1);
+});
+
+test("a stop with neither text nor a follow-up stays reasonless", () => {
+  const store = freshStore();
+  addIntervention(store, { id: "a", ts: "2026-09-01T00:00:00Z", quote: BARE });
+  assert.equal(interventionQuality(store).bareInterrupts, 1);
+});
+
+test("a turn's own text is preferred over the one after it", () => {
+  assert.equal(reasonFor({ quote: "no, wrong table", followup_quote: "later" }), "no, wrong table");
+  assert.equal(reasonFor({ quote: BARE, followup_quote: "the reason" }), "the reason");
+  assert.equal(reasonFor({ quote: BARE, followup_quote: null }), null);
+});
+
+test("a slash command or a resume is not a reason", () => {
+  assert.equal(followupReason("/login</command-name> <command-message>login"), null);
+  assert.equal(followupReason("Continue from where you left off."), null);
+  assert.equal(followupReason("ok"), null);
+  assert.equal(followupReason("[Request interrupted by user]"), null);
+  assert.equal(followupReason("stop polling, run it in the background"), "stop polling, run it in the background");
 });

@@ -110,7 +110,10 @@ CREATE TABLE IF NOT EXISTS interventions (
   preceding_tool TEXT,
   -- The interrupted tool call's command or path. A bare interrupt records no reason, so this is
   -- the only evidence of what the human stopped.
-  preceding_detail TEXT
+  preceding_detail TEXT,
+  -- The next human turn after a bare interrupt. Stopping and then saying what was wrong are two
+  -- turns, so the reason for a stop is recorded on the turn after it.
+  followup_quote TEXT
 );
 
 CREATE INDEX IF NOT EXISTS interventions_ts_idx ON interventions (ts DESC);

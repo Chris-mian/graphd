@@ -23,7 +23,10 @@ const NODE_RESULT_COLUMNS = [
 
 const SESSION_COLUMNS = [["turn_count", "INTEGER NOT NULL DEFAULT 0"]];
 
-const INTERVENTION_COLUMNS = [["preceding_detail", "TEXT"]];
+const INTERVENTION_COLUMNS = [
+  ["preceding_detail", "TEXT"],
+  ["followup_quote", "TEXT"],
+];
 
 /** Adds a column to an existing table; schema.sql only covers fresh stores. */
 function migrateColumns(store, table, columns) {
