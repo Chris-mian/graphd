@@ -1,10 +1,15 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
+  classifyTargetRef,
   completeNode,
   insertNode,
+  insertResumption,
+  isTopologySubstantive,
+  nowIso,
   recordEvent,
   recordTopology,
   resolveRunningNodeId,
+  resumptionsForRun,
   upsertRun,
 } from "./db.mjs";
 import { decideSpawn } from "./policy.mjs";
@@ -47,6 +52,7 @@ export function handleNodeSpawn(store, body) {
     tool: body.tool,
     agentType: body.agentType,
     label: body.label,
+    name: body.name,
     model: body.model,
     promptSha: hashPrompt(body.prompt),
     promptText: body.prompt ? body.prompt.slice(0, MAX_TEXT_CHARS) : null,
@@ -64,11 +70,44 @@ export function handleNodeEnd(store, body) {
   return { nodeId };
 }
 
+/**
+ * Stores a declared topology, rejecting one that says nothing.
+ * Rejecting at the POST rather than at the next spawn means the declaration fails where it
+ * was written, not three agents later.
+ */
 export function handleTopology(store, body) {
   const runId = resolveRunId(body);
+  const topology = body.topology ?? {};
+  if (!isTopologySubstantive(topology)) {
+    return {
+      runId,
+      accepted: false,
+      shape: null,
+      reason:
+        "graphd: topology not stored — it needs at least one node or edge, and every edge " +
+        "needs from, to, and a `carries` naming the artifact that crosses it. An edge that " +
+        "carries nothing is not an edge, and those nodes run concurrently.",
+    };
+  }
   upsertRun(store, { runId, sessionId: body.sessionId, cwd: body.cwd });
-  recordTopology(store, { runId, topology: body.topology ?? {} });
-  return { runId, shape: body.topology?.shape ?? null };
+  recordTopology(store, { runId, topology });
+  return { runId, accepted: true, shape: topology.shape ?? null };
+}
+
+/** Records a message sent to a running agent. The lead thread is the sender unless one is named. */
+export function handleResumption(store, body) {
+  const runId = resolveRunId(body);
+  upsertRun(store, { runId, sessionId: body.sessionId, cwd: body.cwd });
+  const changes = insertResumption(store, {
+    id: body.resumptionId ?? `${runId}-${hashPrompt(`${body.targetRef}${nowIso()}`)}`,
+    runId,
+    ts: nowIso(),
+    targetRef: body.targetRef ?? null,
+    targetKind: classifyTargetRef(body.targetRef),
+    sender: body.senderRef ? "agent" : "lead",
+    senderRef: body.senderRef ?? null,
+  });
+  return { runId, accepted: changes > 0 };
 }
 
 export function handlePolicyCheck(store, config, body) {
@@ -91,6 +130,8 @@ export function handleEvent(store, config, body) {
       return handleNodeEnd(store, body);
     case "topology":
       return handleTopology(store, body);
+    case "resumption":
+      return handleResumption(store, body);
     default:
       return { accepted: true };
   }
@@ -150,6 +191,7 @@ export function getRun(store, runId) {
     topology: run.topology_json ? JSON.parse(run.topology_json) : null,
     checks,
     interventions,
+    resumptions: resumptionsForRun(store, runId),
   };
 }
 

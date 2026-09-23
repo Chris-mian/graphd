@@ -7,6 +7,7 @@ import { DB_PATH, ensureStateDir } from "./config.mjs";
 const SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "schema.sql");
 
 const NODE_RESULT_COLUMNS = [
+  ["name", "TEXT"],
   ["agent_id", "TEXT"],
   ["resolved_model", "TEXT"],
   ["total_tokens", "INTEGER"],
@@ -63,9 +64,9 @@ export function insertNode(store, node) {
   store
     .prepare(
       `INSERT INTO nodes
-         (id, run_id, parent_node_id, tool, agent_type, label, model, prompt_sha, started_at,
-          prompt_text)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (id, run_id, parent_node_id, tool, agent_type, label, name, model, prompt_sha,
+          started_at, prompt_text)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO NOTHING`,
     )
     .run(
@@ -75,6 +76,7 @@ export function insertNode(store, node) {
       node.tool,
       node.agentType ?? null,
       node.label ?? null,
+      node.name ?? null,
       node.model ?? null,
       node.promptSha ?? null,
       node.startedAt ?? nowIso(),
@@ -207,7 +209,67 @@ export function countRecentAgentNodes(store, runId, windowMinutes) {
 
 export function hasDeclaredTopology(store, runId) {
   const row = store.prepare("SELECT topology_json FROM runs WHERE id = ?").get(runId);
-  return Boolean(row?.topology_json);
+  if (!row?.topology_json) return false;
+  try {
+    return isTopologySubstantive(JSON.parse(row.topology_json));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether a declared topology says anything. An empty object satisfied the gate before this
+ * check existed, so the rule could be cleared by POSTing nothing.
+ */
+export function isTopologySubstantive(topology) {
+  if (!topology || typeof topology !== "object") return false;
+  const edges = Array.isArray(topology.edges) ? topology.edges : [];
+  const nodes = Array.isArray(topology.nodes) ? topology.nodes : [];
+  if (edges.length === 0 && nodes.length === 0) return false;
+  return edges.every((edge) => Boolean(edge?.from && edge?.to && edge?.carries));
+}
+
+const AGENT_ID_PATTERN = /^[0-9a-f]{16,18}$/;
+
+/** Whether a SendMessage target is an agent_id or the `name` given at spawn. */
+export function classifyTargetRef(targetRef) {
+  if (typeof targetRef !== "string" || targetRef.length === 0) return "unknown";
+  return AGENT_ID_PATTERN.test(targetRef) ? "agent_id" : "name";
+}
+
+/**
+ * Records one SendMessage to a running agent, resolving the target to a node when the
+ * reference matches an agent_id or a spawn name in the same run.
+ */
+export function insertResumption(store, resumption) {
+  const target = store
+    .prepare(
+      `SELECT id FROM nodes
+        WHERE run_id = ? AND (agent_id = ? OR name = ?)
+        ORDER BY started_at DESC LIMIT 1`,
+    )
+    .get(resumption.runId, resumption.targetRef, resumption.targetRef);
+  return store
+    .prepare(
+      `INSERT INTO resumptions (id, run_id, ts, target_ref, target_kind, sender, sender_ref, node_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id) DO NOTHING`,
+    )
+    .run(
+      resumption.id,
+      resumption.runId,
+      resumption.ts,
+      resumption.targetRef,
+      resumption.targetKind,
+      resumption.sender,
+      resumption.senderRef ?? null,
+      target?.id ?? null,
+    ).changes;
+}
+
+/** Resumptions per run, for reporting how much agent work involved a question round trip. */
+export function resumptionsForRun(store, runId) {
+  return store.prepare("SELECT * FROM resumptions WHERE run_id = ? ORDER BY ts").all(runId);
 }
 
 export function recordPolicyCheck(store, check) {

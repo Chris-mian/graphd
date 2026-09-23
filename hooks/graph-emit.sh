@@ -10,7 +10,7 @@ readonly GRAPHD_URL="${GRAPHD_URL:-http://127.0.0.1:8787}"
 readonly TOKEN_FILE="${GRAPHD_STATE_DIR:-$HOME/.graphd}/token"
 readonly REQUEST_TIMEOUT_SECONDS=0.2
 readonly MAX_TEXT_CHARS=4000
-readonly TRACKED_TOOLS='Agent|Workflow|Task|Skill'
+readonly TRACKED_TOOLS='Agent|Workflow|Task|Skill|SendMessage'
 readonly SPAWN_TOOLS='Agent|Workflow|Task'
 
 allow_and_exit() { exit 0; }
@@ -34,6 +34,7 @@ session_cwd="$(printf '%s' "$hook_payload_json" | jq -r '.cwd // ""')"
 agent_prompt="$(printf '%s' "$hook_payload_json" | jq -r '.tool_input.prompt // ""')"
 agent_type="$(printf '%s' "$hook_payload_json" | jq -r '.tool_input.subagent_type // ""')"
 agent_label="$(printf '%s' "$hook_payload_json" | jq -r '.tool_input.description // .tool_input.name // ""')"
+agent_name="$(printf '%s' "$hook_payload_json" | jq -r '.tool_input.name // ""')"
 agent_model="$(printf '%s' "$hook_payload_json" | jq -r '.tool_input.model // ""')"
 
 # The prompt hash pairs a spawn with its result; the random suffix keeps two identical prompts
@@ -48,9 +49,19 @@ post_json() {
     -X POST "$GRAPHD_URL$1" -d "$2" 2>/dev/null
 }
 
-# Skills are recorded for the invocation log only; they spawn nothing and are never gated.
+# Neither Skill nor SendMessage spawns anything, so neither is ever gated. SendMessage is
+# recorded because a resume is the only way a blocked agent gets unblocked, and without it an
+# agent that stopped to ask a question looks the same as one that finished.
 if [[ ! "$tool_name" =~ ^($SPAWN_TOOLS)$ ]]; then
   [ "$hook_event" = "PreToolUse" ] || allow_and_exit
+  if [ "$tool_name" = "SendMessage" ]; then
+    resume_target="$(printf '%s' "$hook_payload_json" | jq -r '.tool_input.to // ""')"
+    resume_body="$(jq -nc --arg sessionId "$session_id" --arg cwd "$session_cwd" \
+      --arg targetRef "$resume_target" \
+      '{kind: "resumption", sessionId: $sessionId, cwd: $cwd, targetRef: $targetRef}')"
+    post_json /v1/events "$resume_body" >/dev/null
+    allow_and_exit
+  fi
   skill_name="$(printf '%s' "$hook_payload_json" | jq -r '.tool_input.skill // ""')"
   skill_body="$(jq -nc --arg sessionId "$session_id" --arg cwd "$session_cwd" --arg skill "$skill_name" \
     '{kind: "skill_invoked", sessionId: $sessionId, cwd: $cwd, skill: $skill}')"
@@ -91,9 +102,9 @@ decision_json="$(post_json /v1/policy/check "$check_body")"
 spawn_body="$(jq -nc \
   --arg nodeId "$node_id" --arg sessionId "$session_id" --arg cwd "$session_cwd" \
   --arg tool "$tool_name" --arg agentType "$agent_type" --arg label "$agent_label" \
-  --arg model "$agent_model" --arg prompt "$agent_prompt" \
+  --arg name "$agent_name" --arg model "$agent_model" --arg prompt "$agent_prompt" \
   '{kind: "node_spawn", nodeId: $nodeId, sessionId: $sessionId, cwd: $cwd, tool: $tool,
-    agentType: $agentType, label: $label, model: $model, prompt: $prompt}')"
+    agentType: $agentType, label: $label, name: $name, model: $model, prompt: $prompt}')"
 
 # jq's // treats false as empty, so `.isAllowed // true` would swallow every deny.
 is_allowed="$(printf '%s' "$decision_json" \

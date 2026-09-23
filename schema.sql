@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS nodes (
   tool           TEXT NOT NULL,                    -- 'Agent' | 'Workflow'
   agent_type     TEXT,
   label          TEXT,
+  -- The addressable name from Agent's `name` input. Separate from `label`, which prefers
+  -- `description` and so would discard the only handle SendMessage can be joined on.
+  name           TEXT,
   model          TEXT,
   prompt_sha     TEXT,
   started_at     TEXT NOT NULL,
@@ -121,3 +124,22 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 CREATE INDEX IF NOT EXISTS sessions_started_idx ON sessions (started_at DESC);
+
+-- Messages sent to an already-running agent. A resume is not a spawn and does not extend the
+-- target's ended_at, so without these rows an agent that stopped to ask a question looks
+-- identical to one that finished. target_ref is whatever the sender addressed: a 17-hex
+-- agent_id, or the `name` given at spawn.
+CREATE TABLE IF NOT EXISTS resumptions (
+  id          TEXT PRIMARY KEY,                 -- the SendMessage tool_use id
+  run_id      TEXT NOT NULL,
+  ts          TEXT NOT NULL,
+  target_ref  TEXT,
+  target_kind TEXT CHECK (target_kind IN ('agent_id', 'name', 'unknown')),
+  -- Who sent it. 'lead' is the main thread; 'agent' is a subagent messaging a peer or its lead.
+  sender      TEXT NOT NULL CHECK (sender IN ('lead', 'agent')),
+  sender_ref  TEXT,
+  node_id     TEXT                              -- the resolved target node, when one matches
+);
+
+CREATE INDEX IF NOT EXISTS resumptions_run_idx ON resumptions (run_id, ts);
+CREATE INDEX IF NOT EXISTS resumptions_node_idx ON resumptions (node_id);

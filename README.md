@@ -39,7 +39,10 @@ is denied. Threshold is `rules.requireTopologyBeyondNAgents.threshold` in `confi
 `Workflow` spawns are never denied: a workflow script is itself a declared topology.
 
 Satisfy the rule by POSTing the TOPOLOGY artifact (schema:
-`~/.claude/workflows/lib/contracts.md`):
+`~/.claude/workflows/lib/contracts.md`). The POST is validated: a declaration needs at least one
+node or edge, and every edge needs a `carries` naming the artifact that crosses it. A rejected
+declaration is not stored, so the failure lands where it was written rather than at the next
+spawn.
 
 ```bash
 curl -s -H "Authorization: Bearer $(cat ~/.graphd/token)" -H 'content-type: application/json' \
@@ -62,6 +65,9 @@ A spawn is allowed whenever anything is off-nominal. All of these are tested:
 
 Shadow mode (`enforce: false`) records every would-deny. `graph checks` is how you read the
 false-positive rate before turning blocking on.
+
+`test/policy.test.mjs` covers the rule itself — threshold, Workflow exemption, shadow recording,
+and the topology check. The hook's own fail-open paths are exercised by hand, not by the suite.
 
 ## Hooks
 
@@ -96,7 +102,7 @@ GET  /v1/health
 GET  /v1/runs?limit=
 GET  /v1/runs/<run-id>
 GET  /v1/policy/checks?limit=
-POST /v1/events           {kind: node_spawn|node_end|topology, ...}
+POST /v1/events           {kind: node_spawn|node_end|topology|resumption, ...}
 POST /v1/policy/check     {sessionId, tool} -> {isAllowed, wouldDeny, rule, reason}
 POST /v1/topology         {sessionId, topology}
 ```
@@ -128,7 +134,8 @@ Run counts come from `Workflow` spawns whose label matches the script's `meta.na
 
 `node bin/graph-import.mjs [days]` replays `~/.claude/projects/**/*.jsonl` into the store —
 agent spawns, results, durations, tokens, and resolved models — so analysis does not have to wait
-for new traffic. Re-running is safe; nodes are keyed by tool_use id.
+for new traffic. It also walks each session's `subagents/` directory, which is where an agent's
+own spawns and messages are recorded. Re-running is safe; nodes are keyed by tool_use id.
 
 `graph stats` reports, across every run: how many multi-agent runs never had two agents running at
 once, serialized agent-time (total node duration minus the slowest node, counted only when nothing
@@ -148,6 +155,12 @@ by week — plus which tool was running when a human stepped in.
 
 `/lesson-harvest` reads that and proposes one durable artifact per recurring theme (hook > skill >
 agent brief > memory > prose, most enforceable tier that fits). It proposes; it never applies.
+
+Messages to a running agent are recorded too, in `resumptions`. A sub-agent cannot prompt a human,
+so when it needs one it reports back and is resumed with `SendMessage`; none of that round trip
+touches `nodes`, and without these rows an agent that stopped to ask a question is
+indistinguishable from one that finished. Most messages address an agent by the `name` it was
+spawned with rather than by `agent_id`, so `nodes.name` is kept separate from `label`.
 
 ## Health
 
@@ -173,16 +186,18 @@ whatever CLI version is installed and fails the whole run with a 400 when it doe
 - Observed edges are derived from timing, not from a parent/child link: B's predecessor is the
   last node that had finished when B started. Nodes that overlap something get no incoming edge,
   which is deliberate — it is what makes a real fan-out visibly edgeless, and `delegationBatches`
-  reads that shape. Real parentage is blocked on the harness rather than on this tool: `nodes`
-  has a `parent_node_id` column and nothing to populate it with. Spawn records carry a session
-  UUID while agent results carry a 17-character hex `agent_id`, with no join between them, and
-  every transcript entry reports `isSidechain: false`, so an agent's own turns cannot be told
-  apart from its parent's.
+  reads that shape. `parent_node_id` is still unpopulated, but no longer for want of a join:
+  sub-agent transcripts under `<session>/subagents/` carry `agentId` and `isSidechain: true`,
+  which does tie an agent's own turns to the node that spawned it. Deriving parentage from that
+  is unbuilt, not blocked.
 - Spend is a floor. Token counts arrive as one total per node with no input/output split, so
   `graph stats` prices at an assumed 90% input share and prints the all-input/all-output bounds
   beside the estimate.
 - Nodes predating the `totalTokens` field contribute zero to spend and are not excluded from the
   totals, so the estimate is low by whatever they cost.
+- A resumption resolves to a node only when its target was spawned in the same run. Roughly a
+  quarter do not resolve — messages to agents from another session, or to teammates this store
+  never saw. They are still recorded, with a null node.
 - The importer measures only real work: transcripts whose working directory is test scratch
   (romp's suite replays recorded turns through a scratch checkout) are skipped, and the skip
   count is printed on every import.

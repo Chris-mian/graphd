@@ -3,7 +3,12 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { openStore, recordTaskCompletion } from "../src/db.mjs";
+import {
+  classifyTargetRef,
+  insertResumption,
+  openStore,
+  recordTaskCompletion,
+} from "../src/db.mjs";
 import { parseTaskNotifications } from "../src/tasknotify.mjs";
 import {
   classifyAssistantText,
@@ -14,6 +19,8 @@ import {
 
 const TRANSCRIPT_ROOT = join(homedir(), ".claude", "projects");
 const SPAWN_TOOL_NAMES = new Set(["Agent", "Task", "Workflow"]);
+const RESUME_TOOL_NAME = "SendMessage";
+const SUBAGENT_DIR_NAME = "subagents";
 const PROMPT_SHA_LENGTH = 16;
 const MILLISECONDS_PER_DAY = 86_400_000;
 const MAX_TEXT_CHARS = 4000;
@@ -37,23 +44,41 @@ function promptSha(sessionId, tool, prompt) {
     .slice(0, PROMPT_SHA_LENGTH);
 }
 
-function transcriptPaths() {
-  if (!statSync(TRANSCRIPT_ROOT, { throwIfNoEntry: false })) return [];
-  return readdirSync(TRANSCRIPT_ROOT)
-    .flatMap((projectDir) => {
-      const projectPath = join(TRANSCRIPT_ROOT, projectDir);
-      if (!statSync(projectPath).isDirectory()) return [];
-      return readdirSync(projectPath)
-        .filter((fileName) => fileName.endsWith(".jsonl"))
-        .map((fileName) => join(projectPath, fileName));
-    });
+/** Every `.jsonl` directly under `dir`, or [] when the directory is missing. */
+function jsonlPathsIn(dir) {
+  if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return [];
+  return readdirSync(dir)
+    .filter((fileName) => fileName.endsWith(".jsonl"))
+    .map((fileName) => join(dir, fileName));
 }
 
-/** Collects the session itself, spawn records, their results, and human/agent interventions. */
+/**
+ * Main-thread transcripts plus the per-agent transcripts under each session's `subagents/`.
+ * Subagent transcripts hold the only record of an agent messaging a peer or its lead.
+ */
+function transcriptPaths() {
+  if (!statSync(TRANSCRIPT_ROOT, { throwIfNoEntry: false })) return [];
+  return readdirSync(TRANSCRIPT_ROOT).flatMap((projectDir) => {
+    const projectPath = join(TRANSCRIPT_ROOT, projectDir);
+    if (!statSync(projectPath).isDirectory()) return [];
+    const mainPaths = jsonlPathsIn(projectPath);
+    const subagentPaths = readdirSync(projectPath).flatMap((sessionDir) => {
+      const subagentPath = join(projectPath, sessionDir, SUBAGENT_DIR_NAME);
+      return jsonlPathsIn(subagentPath);
+    });
+    return [...mainPaths, ...subagentPaths];
+  });
+}
+
+/**
+ * Collects the session, spawn records, their results, human/agent interventions, and
+ * messages sent to already-running agents.
+ */
 function parseTranscript(path) {
   const spawns = [];
   const resultsByToolUseId = new Map();
   const interventions = [];
+  const resumptions = [];
   const entries = [];
   let lastToolName = null;
   const session = { id: null, cwd: null, startedAt: null, endedAt: null };
@@ -119,8 +144,21 @@ function parseTranscript(path) {
           tool: block.name,
           agentType: block.input?.subagent_type ?? null,
           label: block.input?.description ?? block.input?.name ?? null,
+          name: block.input?.name ?? null,
           model: block.input?.model ?? null,
           prompt: block.input?.prompt ?? "",
+        });
+      }
+      if (block.type === "tool_use" && block.name === RESUME_TOOL_NAME) {
+        const targetRef = block.input?.to ?? null;
+        resumptions.push({
+          id: block.id,
+          runId: entry.sessionId ?? entry.session_id,
+          ts: entry.timestamp,
+          targetRef,
+          targetKind: classifyTargetRef(targetRef),
+          sender: entry.agentId ? "agent" : "lead",
+          senderRef: entry.agentId ?? entry.agentName ?? null,
         });
       }
       if (block.type === "tool_use") lastToolName = block.name;
@@ -132,7 +170,7 @@ function parseTranscript(path) {
       }
     }
   }
-  return { session, spawns, resultsByToolUseId, interventions, entries };
+  return { session, spawns, resultsByToolUseId, interventions, resumptions, entries };
 }
 
 /** Older transcripts carry no totalDurationMs; the result timestamp still bounds the node. */
@@ -172,11 +210,12 @@ function insertSpawn(store, spawn, completion) {
   store
     .prepare(
       `INSERT INTO nodes
-         (id, run_id, tool, agent_type, label, model, prompt_sha, started_at, ended_at,
+         (id, run_id, tool, agent_type, label, name, model, prompt_sha, started_at, ended_at,
           status, duration_ms, agent_id, resolved_model, total_tokens, tool_use_count,
           task_id, output_file, is_async, true_duration_ms, prompt_text, result_text)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET
+         name             = COALESCE(excluded.name, nodes.name),
          task_id          = COALESCE(excluded.task_id, nodes.task_id),
          output_file      = COALESCE(excluded.output_file, nodes.output_file),
          is_async         = excluded.is_async,
@@ -190,6 +229,7 @@ function insertSpawn(store, spawn, completion) {
       spawn.tool,
       result.agentType ?? spawn.agentType,
       spawn.label,
+      spawn.name ?? null,
       spawn.model,
       promptSha(spawn.sessionId, spawn.tool, spawn.prompt),
       spawn.startedAt,
@@ -251,9 +291,14 @@ let importedInterventions = 0;
 let reconciledCompletions = 0;
 let skippedScratch = 0;
 
+// Resumptions resolve their target against `nodes`, so they are applied after every transcript
+// has contributed its spawns; a message can otherwise arrive before the node it points at.
+const pendingResumptions = [];
+
 store.exec("BEGIN");
 for (const path of transcriptPaths()) {
-  const { session, spawns, resultsByToolUseId, interventions, entries } = parseTranscript(path);
+  const { session, spawns, resultsByToolUseId, interventions, resumptions, entries } =
+    parseTranscript(path);
   if (isScratchCwd(session.cwd)) {
     skippedScratch += 1;
     continue;
@@ -274,6 +319,11 @@ for (const path of transcriptPaths()) {
     insertSpawn(store, spawn, resultsByToolUseId.get(spawn.toolUseId));
     importedNodes += 1;
   }
+  for (const resumption of resumptions) {
+    if (!resumption.id || !resumption.runId || !resumption.ts) continue;
+    if (Date.parse(resumption.ts) < cutoffMs) continue;
+    pendingResumptions.push(resumption);
+  }
   for (const notification of parseTaskNotifications(entries)) {
     for (const taskId of notification.taskIds) {
       reconciledCompletions += recordTaskCompletion(store, {
@@ -284,10 +334,20 @@ for (const path of transcriptPaths()) {
     }
   }
 }
+
+let importedResumptions = 0;
+let resolvedResumptions = 0;
+for (const resumption of pendingResumptions) {
+  importedResumptions += insertResumption(store, resumption);
+}
+resolvedResumptions = store
+  .prepare("SELECT COUNT(*) AS resolvedCount FROM resumptions WHERE node_id IS NOT NULL")
+  .get().resolvedCount;
 store.exec("COMMIT");
 
 process.stdout.write(
   `scanned ${scannedTranscripts} transcripts (${skippedScratch} scratch skipped), ` +
     `imported ${importedNodes} agent nodes, ${importedInterventions} interventions, ` +
+    `${importedResumptions} resumptions (${resolvedResumptions} resolved to a node), ` +
     `reconciled ${reconciledCompletions} async completions\n`,
 );
