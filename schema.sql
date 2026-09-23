@@ -107,7 +107,10 @@ CREATE TABLE IF NOT EXISTS interventions (
   ts           TEXT NOT NULL,
   kind         TEXT NOT NULL CHECK (kind IN ('interrupt', 'correction', 'self_correction')),
   quote        TEXT NOT NULL,
-  preceding_tool TEXT
+  preceding_tool TEXT,
+  -- The interrupted tool call's command or path. A bare interrupt records no reason, so this is
+  -- the only evidence of what the human stopped.
+  preceding_detail TEXT
 );
 
 CREATE INDEX IF NOT EXISTS interventions_ts_idx ON interventions (ts DESC);
@@ -120,7 +123,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   id         TEXT PRIMARY KEY,
   cwd        TEXT,
   started_at TEXT NOT NULL,
-  ended_at   TEXT
+  ended_at   TEXT,
+  -- Assistant turns. Wall-clock between first and last message is not work time: a resumed
+  -- session counts the days it sat idle, which put one week at 1271 hours across 2 sessions.
+  turn_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS sessions_started_idx ON sessions (started_at DESC);

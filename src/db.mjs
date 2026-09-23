@@ -21,11 +21,17 @@ const NODE_RESULT_COLUMNS = [
   ["result_text", "TEXT"],
 ];
 
-/** Adds result columns to an existing nodes table; schema.sql only covers fresh stores. */
-function migrateNodeColumns(store) {
-  const existing = new Set(store.prepare("PRAGMA table_info(nodes)").all().map((row) => row.name));
-  for (const [column, type] of NODE_RESULT_COLUMNS) {
-    if (!existing.has(column)) store.exec(`ALTER TABLE nodes ADD COLUMN ${column} ${type}`);
+const SESSION_COLUMNS = [["turn_count", "INTEGER NOT NULL DEFAULT 0"]];
+
+const INTERVENTION_COLUMNS = [["preceding_detail", "TEXT"]];
+
+/** Adds a column to an existing table; schema.sql only covers fresh stores. */
+function migrateColumns(store, table, columns) {
+  const existing = new Set(
+    store.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name),
+  );
+  for (const [column, type] of columns) {
+    if (!existing.has(column)) store.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   }
 }
 
@@ -34,7 +40,9 @@ export function openStore(databasePath = DB_PATH) {
   ensureStateDir();
   const store = new DatabaseSync(databasePath);
   store.exec(readFileSync(SCHEMA_PATH, "utf8"));
-  migrateNodeColumns(store);
+  migrateColumns(store, "nodes", NODE_RESULT_COLUMNS);
+  migrateColumns(store, "sessions", SESSION_COLUMNS);
+  migrateColumns(store, "interventions", INTERVENTION_COLUMNS);
   return store;
 }
 

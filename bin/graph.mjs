@@ -187,6 +187,80 @@ function printLessons(lessons) {
   }
 }
 
+const SURFACE_ROWS = 6;
+const SHAPE_ROWS = 8;
+const DETAIL_ROWS = 6;
+const DETAIL_WIDTH = 96;
+
+/** Where the reasonless stops land: by tool, by command shape, and the last few verbatim. */
+function printStoppedWork(surfaces, shapes, recent) {
+  process.stdout.write("\nwhere the reasonless stops happen\n");
+  for (const row of surfaces.slice(0, SURFACE_ROWS)) {
+    process.stdout.write(`  ${String(row.count).padStart(3)}  ${row.surface}\n`);
+  }
+  if (shapes.length > 0) {
+    process.stdout.write("\nwhat was running when stopped\n");
+    for (const row of shapes.slice(0, SHAPE_ROWS)) {
+      process.stdout.write(`  ${String(row.count).padStart(3)}  ${row.shape}\n`);
+    }
+  }
+  if (recent.length > 0) {
+    process.stdout.write("\nthe last few, verbatim\n");
+    for (const row of recent.slice(0, DETAIL_ROWS)) {
+      process.stdout.write(`  ${row.ts.slice(0, 10)}  ${row.detail.slice(0, DETAIL_WIDTH)}\n`);
+    }
+  }
+}
+
+function printEvaluation(evaluation) {
+  const { quality, bareInterruptSurfaces, stoppedCommandShapes, recentStoppedCommands, themes, power, trend } =
+    evaluation;
+  const share = (part) => (quality.total > 0 ? Math.round((part / quality.total) * 100) : 0);
+
+  process.stdout.write("what the intervention record is made of\n");
+  process.stdout.write(
+    `  ${quality.total} human interventions\n` +
+      `  ${quality.bareInterrupts} (${share(quality.bareInterrupts)}%) bare interrupts — a stop, with no reason recorded\n` +
+      `  ${quality.withReason} (${share(quality.withReason)}%) carry text, of which ${quality.distinctReasons} are distinct\n`,
+  );
+  if (quality.duplicateReasons > 0) {
+    process.stdout.write(`  ${quality.duplicateReasons} duplicate quote(s) — the same event counted twice\n`);
+  }
+
+  printStoppedWork(bareInterruptSurfaces, stoppedCommandShapes, recentStoppedCommands);
+
+  process.stdout.write(`\nthemes among the ${themes.sampleSize} that say why\n`);
+  for (const theme of themes.themes) {
+    if (theme.count === 0) continue;
+    process.stdout.write(`  ${String(theme.count).padStart(3)}  ${theme.label}\n`);
+  }
+  if (themes.unmatched > 0) {
+    process.stdout.write(`  ${String(themes.unmatched).padStart(3)}  (no theme matched)\n`);
+  }
+
+  process.stdout.write("\ncan we judge whether an accepted rule worked?\n");
+  if (power.isPowered) {
+    process.stdout.write(`  yes — ${power.sampleSize} reasoned interventions over ${power.spanDays} days\n`);
+  } else {
+    process.stdout.write(
+      `  NO. ${power.acceptedRuleCount} rules accepted, but only ${power.sampleSize} reasoned\n` +
+        `  interventions exist over ${power.spanDays} days (${power.ratePerWeek.toFixed(1)}/week).\n` +
+        `  A before/after rate needs ~${power.shortfall} more before it means anything.\n` +
+        `  Until then no rule can be shown to work, and none can be shown not to.\n`,
+    );
+  }
+
+  process.stdout.write("\nautonomy — per session, and per 100 assistant turns\n");
+  for (const row of trend) {
+    if (row.humanCount === 0 && row.turnCount === 0) continue;
+    const perTurns = row.per100Turns == null ? "  n/a" : row.per100Turns.toFixed(2).padStart(5);
+    process.stdout.write(
+      `  ${row.week}  per-session ${row.perSession.toFixed(2).padStart(5)}  per-100-turns ${perTurns}` +
+        `   (${row.humanCount} over ${row.sessionCount} sessions / ${row.turnCount} turns)\n`,
+    );
+  }
+}
+
 function printDiagnostics(checks) {
   const marks = { pass: "✓", warn: "⚠", fail: "✕" };
   for (const entry of checks) {
@@ -235,6 +309,9 @@ try {
       break;
     case "lessons":
       printLessons((await callDaemon("/v1/lessons")).lessons);
+      break;
+    case "eval":
+      printEvaluation((await callDaemon("/v1/evaluation")).evaluation);
       break;
     case "accept":
       process.stdout.write(`${JSON.stringify(await postDaemon("/v1/lessons/accept", { rule: process.argv.slice(3).join(" ") }))}\n`);

@@ -15,6 +15,7 @@ import { openStore } from "./db.mjs";
 import { listWorkflows, promoteWorkflow, rejectWorkflow } from "./library.mjs";
 import { runDiagnostics } from "./doctor.mjs";
 import { computeStats } from "./stats.mjs";
+import { computeEvaluation } from "./evaluation.mjs";
 import { computeLessons } from "./lessons.mjs";
 import { acceptRule, acceptedRulesBlock, readAcceptedRules } from "./accepted.mjs";
 import { addProposals, decideProposal, readProposals } from "./proposals.mjs";
@@ -87,6 +88,9 @@ function routeGet(store, config, url) {
   }
   if (url.pathname === "/v1/events") {
     return { events: listEvents(store, parseIntegerParam(url, "limit", undefined)) };
+  }
+  if (url.pathname === "/v1/evaluation") {
+    return { evaluation: computeEvaluation(store) };
   }
   if (url.pathname === "/v1/resumptions") {
     return { resumptions: listResumptions(store, parseIntegerParam(url, "limit", undefined)) };

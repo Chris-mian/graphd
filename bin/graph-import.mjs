@@ -14,6 +14,7 @@ import {
   classifyAssistantText,
   classifyHumanTurn,
   matchedSentence,
+  summarizeToolInput,
   toQuote,
 } from "../src/interventions.mjs";
 
@@ -81,7 +82,8 @@ function parseTranscript(path) {
   const resumptions = [];
   const entries = [];
   let lastToolName = null;
-  const session = { id: null, cwd: null, startedAt: null, endedAt: null };
+  let lastToolDetail = null;
+  const session = { id: null, cwd: null, startedAt: null, endedAt: null, turnCount: 0 };
 
   for (const line of readFileSync(path, "utf8").split("\n")) {
     if (!line.startsWith("{")) continue;
@@ -113,10 +115,12 @@ function parseTranscript(path) {
           kind,
           quote: toQuote(entry.message.content),
           precedingTool: lastToolName,
+          precedingDetail: lastToolDetail,
         });
       }
     }
     if (entry.type === "assistant" && !entry.isSidechain) {
+      session.turnCount += 1;
       for (const block of blocks) {
         if (block.type !== "text") continue;
         const kind = classifyAssistantText(block.text);
@@ -129,6 +133,7 @@ function parseTranscript(path) {
           kind,
           quote: matchedSentence(block.text),
           precedingTool: lastToolName,
+          precedingDetail: lastToolDetail,
         });
         break;
       }
@@ -161,7 +166,10 @@ function parseTranscript(path) {
           senderRef: entry.agentId ?? entry.agentName ?? null,
         });
       }
-      if (block.type === "tool_use") lastToolName = block.name;
+      if (block.type === "tool_use") {
+        lastToolName = block.name;
+        lastToolDetail = summarizeToolInput(block.input);
+      }
       if (block.type === "tool_result" && entry.toolUseResult) {
         resultsByToolUseId.set(block.tool_use_id, {
           endedAt: entry.timestamp,
@@ -252,20 +260,22 @@ function insertSpawn(store, spawn, completion) {
 function upsertSession(store, session) {
   store
     .prepare(
-      `INSERT INTO sessions (id, cwd, started_at, ended_at)
-       VALUES (?, ?, ?, ?)
+      `INSERT INTO sessions (id, cwd, started_at, ended_at, turn_count)
+       VALUES (?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET
-         cwd      = COALESCE(excluded.cwd, sessions.cwd),
-         ended_at = MAX(COALESCE(sessions.ended_at, ''), COALESCE(excluded.ended_at, ''))`,
+         cwd        = COALESCE(excluded.cwd, sessions.cwd),
+         ended_at   = MAX(COALESCE(sessions.ended_at, ''), COALESCE(excluded.ended_at, '')),
+         turn_count = MAX(sessions.turn_count, excluded.turn_count)`,
     )
-    .run(session.id, session.cwd, session.startedAt, session.endedAt);
+    .run(session.id, session.cwd, session.startedAt, session.endedAt, session.turnCount);
 }
 
 function insertIntervention(store, intervention) {
   store
     .prepare(
-      `INSERT INTO interventions (id, run_id, cwd, ts, kind, quote, preceding_tool)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO interventions
+         (id, run_id, cwd, ts, kind, quote, preceding_tool, preceding_detail)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO NOTHING`,
     )
     .run(
@@ -276,6 +286,7 @@ function insertIntervention(store, intervention) {
       intervention.kind,
       intervention.quote,
       intervention.precedingTool,
+      intervention.precedingDetail ?? null,
     );
 }
 

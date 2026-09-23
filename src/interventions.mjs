@@ -19,6 +19,12 @@ const OPENING_WINDOW = 90;
 const SESSION_MANAGER_RECAP_PATTERN =
   /<[a-z-]*(goals?|unit|segment|turn|work)\s+[0-9a-f]{6,}>|romp-system/i;
 
+/**
+ * Turns that look like a human redirect but are not one. A task notification is the harness
+ * reporting an agent finished; a quoted reply repeats a turn already counted where it was said.
+ */
+const NOT_A_HUMAN_TURN_PATTERN = /<task-notification>|^Replying to this part of the conversation:/i;
+
 export const INTERVENTION_KINDS = {
   INTERRUPT: "interrupt",
   CORRECTION: "correction",
@@ -87,10 +93,12 @@ function matchesAny(patterns, text) {
 export function classifyHumanTurn(rawContent) {
   const raw = contentText(rawContent);
   if (SESSION_MANAGER_RECAP_PATTERN.test(raw)) return null;
+  if (NOT_A_HUMAN_TURN_PATTERN.test(raw)) return null;
   if (raw.includes(INTERRUPT_MARKER)) return INTERVENTION_KINDS.INTERRUPT;
   const text = humanText(rawContent);
   if (!text) return null;
   if (MACHINE_PREFIXES.some((prefix) => text.startsWith(prefix))) return null;
+  if (text.startsWith(">")) return null;
   return matchesAny(CORRECTION_PATTERNS, text.slice(0, OPENING_WINDOW))
     ? INTERVENTION_KINDS.CORRECTION
     : null;
@@ -116,4 +124,44 @@ export function matchedSentence(text) {
 /** Trims a quote to a single readable line for reports. */
 export function toQuote(text) {
   return humanText(text).replace(/\s+/g, " ").slice(0, QUOTE_LENGTH);
+}
+
+const DETAIL_LENGTH = 300;
+
+/**
+ * What the interrupted tool call was actually doing.
+ * Three quarters of human interventions are a bare `[Request interrupted by user]` with no text,
+ * so the tool name alone ("Bash") is the whole record. The input is the only thing left that says
+ * what was stopped.
+ */
+export function summarizeToolInput(input) {
+  if (!input || typeof input !== "object") return null;
+  const value =
+    input.command ?? input.file_path ?? input.pattern ?? input.prompt ?? input.description ?? null;
+  if (typeof value !== "string" || value.length === 0) return null;
+  return value.replace(/\s+/g, " ").trim().slice(0, DETAIL_LENGTH);
+}
+
+/** Tools whose first word is a bare interpreter; the subcommand is what identifies the work. */
+const SUBCOMMAND_PROGRAMS = new Set([
+  "git", "gh", "just", "npm", "pnpm", "uv", "node", "cargo", "aws", "kubectl", "docker", "sqlite3",
+]);
+const SHELL_NOISE_PATTERN = /^(cd\s+\S+\s*(&&|;)\s*|[A-Z_]+=[^\s$]+\s+|sudo\s+|time\s+)+/;
+
+/** Wrappers that run another command; the wrapper name says nothing about what was stopped. */
+const PASSTHROUGH_PATTERN = /^(rtk\s+(proxy\s+)?|env\s+|xargs\s+)+/;
+
+/**
+ * A stable name for the kind of command a detail string holds, so stops can be grouped.
+ * `git log --oneline -5` and `git log -20` are one behavior, not two.
+ */
+export function commandShape(detail) {
+  if (typeof detail !== "string" || detail.length === 0) return null;
+  const stripped = detail.replace(SHELL_NOISE_PATTERN, "").replace(PASSTHROUGH_PATTERN, "");
+  const [program, second] = stripped.split(/\s+/);
+  if (!program) return null;
+  const base = program.split("/").pop();
+  if (base.includes("$") || base.includes("(")) return "(shell expression)";
+  if (!SUBCOMMAND_PROGRAMS.has(base) || !second || second.startsWith("-")) return base;
+  return `${base} ${second}`;
 }

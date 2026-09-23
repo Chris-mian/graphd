@@ -24,6 +24,7 @@ graph runs [limit]      recent runs, declared shape vs what ran
 graph show <run-id>     nodes, edges, declared/observed diff
 graph checks [limit]    policy evaluations, including shadow would-denies
 graph stats             shape, serialized agent-time, spend, harvest candidates
+graph eval              what the intervention record can and cannot prove
 graph library           saved workflows and candidates
 graph doctor            configuration health
 graph enforce <on|off>  flip blocking
@@ -156,6 +157,17 @@ by week — plus which tool was running when a human stepped in.
 `/lesson-harvest` reads that and proposes one durable artifact per recurring theme (hook > skill >
 agent brief > memory > prose, most enforceable tier that fits). It proposes; it never applies.
 
+`graph eval` asks whether that loop can be judged at all. It splits the record into the stops that
+say why and the ones that do not, reports whether enough reasoned interventions exist to compare a
+rule's before and after, and prints the autonomy trend per session *and* per 100 assistant turns —
+a week of many short sessions lowers the per-session rate without any autonomy gain, so the two
+series disagreeing is the interesting case.
+
+Three quarters of interventions are a bare `[Request interrupted by user]` with no text, so the
+tool name is otherwise the whole record. `interventions.preceding_detail` keeps the command or path
+that was interrupted, and `graph eval` groups those by command shape — wrappers like `rtk proxy`
+and a leading `cd` are stripped so the same behavior lands in one bucket.
+
 Messages to a running agent are recorded too, in `resumptions`. A sub-agent cannot prompt a human,
 so when it needs one it reports back and is resumed with `SendMessage`; none of that round trip
 touches `nodes`, and without these rows an agent that stopped to ask a question is
@@ -195,6 +207,9 @@ whatever CLI version is installed and fails the whole run with a 400 when it doe
   beside the estimate.
 - Nodes predating the `totalTokens` field contribute zero to spend and are not excluded from the
   totals, so the estimate is low by whatever they cost.
+- The autonomy denominator is assistant turns, not clock time. Wall-clock between a session's
+  first and last message counts the days a resumed session sat idle, which put one week at 1271
+  hours across 2 sessions.
 - A resumption resolves to a node only when its target was spawned in the same run. Roughly a
   quarter do not resolve — messages to agents from another session, or to teammates this store
   never saw. They are still recorded, with a null node.
