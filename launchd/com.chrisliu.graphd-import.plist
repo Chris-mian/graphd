@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Weekly transcript backfill. Reads local files and writes SQLite; spends no model tokens, so
+     it is safe to run unattended. The harvest that *interprets* this data stays manual. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.chrisliu.graphd-import</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/chrisliu/.nvm/versions/node/v22.22.3/bin/node</string>
+    <string>/Users/chrisliu/romp/graph-mechanism/bin/graph-import.mjs</string>
+    <string>8</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>1</integer>
+    <key>Hour</key>
+    <integer>8</integer>
+    <key>Minute</key>
+    <integer>17</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/graphd-import.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/graphd-import.err</string>
+</dict>
+</plist>

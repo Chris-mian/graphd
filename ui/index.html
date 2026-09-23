@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphd</title>
+<style>
+  :root {
+    color-scheme: light;
+    --plane: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --ring: rgba(11, 11, 11, 0.10);
+    --running: #2a78d6;
+    --good: #0ca30c;
+    --warning: #fab219;
+    --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --plane: #0d0d0d;
+      --surface: #1a1a19;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --ring: rgba(255, 255, 255, 0.10);
+      --running: #3987e5;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --plane: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --ring: rgba(255, 255, 255, 0.10);
+    --running: #3987e5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    background: var(--plane); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  h2 { font-size: 13px; margin: 0 0 10px; color: var(--ink-2); font-weight: 600; }
+  .spacer { flex: 1; }
+  .card {
+    background: var(--surface); border: 1px solid var(--ring); border-radius: 10px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--ring);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  button {
+    font: inherit; font-size: 12px; padding: 5px 12px; border-radius: 8px;
+    border: 1px solid var(--ring); background: var(--surface); color: var(--ink); cursor: pointer;
+  }
+  button:hover { border-color: var(--axis); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--muted); font-weight: 600; padding: 0 10px 6px 0; border-bottom: 1px solid var(--grid);
+  }
+  td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--grid); color: var(--ink-2); }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td { color: var(--ink); }
+  tr.is-selected td { color: var(--ink); font-weight: 600; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .tiles { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 16px; }
+  .tile-value { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; }
+  .tile-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  .track { position: relative; height: 22px; background: linear-gradient(var(--grid), var(--grid)) left center / 100% 1px no-repeat; }
+  .bar {
+    position: absolute; top: 5px; height: 12px; border-radius: 4px;
+    box-shadow: 0 0 0 2px var(--surface);
+  }
+  .bar-label { font-size: 11px; color: var(--ink-2); white-space: nowrap; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); margin-top: 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+  .edge { font-size: 12px; color: var(--ink-2); }
+.tile { display: flex; flex-direction: column; gap: 2px; }
+.tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-2); }
+.tile .v { font-size: 15px; font-weight: 650; }
+.excerpt { white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  background: var(--grid); padding: 8px; border-radius: 4px; margin: 4px 0 0; }
+.node-row { cursor: pointer; }
+.node-row:hover { background: var(--grid); }
+  #tooltip {
+    position: fixed; pointer-events: none; opacity: 0; transition: opacity 90ms;
+    background: var(--surface); border: 1px solid var(--ring); border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; color: var(--ink); box-shadow: 0 6px 18px rgba(0,0,0,0.16);
+    z-index: 10; max-width: 320px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>graphd</h1>
+  <span class="pill" id="statusPill"><span class="dot"></span><span id="statusText">…</span></span>
+  <span class="spacer"></span>
+  <button id="enforceToggle">enforcement</button>
+  <button id="pauseToggle">pause</button>
+  <button id="themeToggle">theme</button>
+  <button id="refresh">refresh</button>
+</header>
+
+<div class="card">
+  <h2>Decisions waiting on you</h2>
+  <div id="proposalRows"></div>
+</div>
+
+<div class="card">
+  <h2>Runs</h2>
+  <div class="tiles" id="tiles"></div>
+  <table>
+    <thead><tr>
+      <th>started</th><th>run</th><th>nodes</th><th>peak</th>
+      <th>declared</th><th>ran</th><th>serialized</th><th>verdict</th>
+    </tr></thead>
+    <tbody id="runRows"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>How this run was orchestrated</h2>
+  <div id="orchestration"><p class="empty">Select a run.</p></div>
+</div>
+
+<div class="card">
+  <h2 id="detailTitle">Timeline</h2>
+  <div id="timeline"><p class="empty">Select a run.</p></div>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--good)"></span>✓ finished</span>
+    <span><span class="dot" style="background:var(--running)"></span>◷ running</span>
+    <span><span class="dot" style="background:var(--critical)"></span>✕ error</span>
+  </div>
+  <div id="edges"></div>
+</div>
+
+<div class="card">
+  <h2>Workflow library</h2>
+  <table>
+    <thead><tr><th>state</th><th>name</th><th>runs</th><th>size</th><th>description</th><th></th></tr></thead>
+    <tbody id="workflowRows"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Health</h2>
+  <div id="doctorRows"></div>
+</div>
+
+<div class="card">
+  <h2>Policy checks</h2>
+  <table>
+    <thead><tr><th>when</th><th>tool</th><th>rule</th><th>outcome</th></tr></thead>
+    <tbody id="checkRows"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Invocation log</h2>
+  <table>
+    <thead><tr><th>when</th><th>kind</th><th>what</th><th>session</th></tr></thead>
+    <tbody id="eventRows"></tbody>
+  </table>
+</div>
+
+<div id="tooltip"></div>
+
+<script type="module">
+const TOKEN_KEY = "graphd.token";
+const THEME_KEY = "graphd.theme";
+const MILLISECONDS_PER_SECOND = 1000;
+const TRACK_MIN_PERCENT = 1.5;
+const REFRESH_INTERVAL_MS = 15000;
+
+const tooltip = document.getElementById("tooltip");
+let selectedRunId = null;
+
+function token() {
+  let stored = localStorage.getItem(TOKEN_KEY) ?? new URL(location.href).searchParams.get("token");
+  if (!stored) stored = prompt("graphd token (cat ~/.graphd/token)") ?? "";
+  localStorage.setItem(TOKEN_KEY, stored.trim());
+  return stored.trim();
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: { Authorization: `Bearer ${token()}`, "content-type": "application/json" },
+  });
+  if (response.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    throw new Error("bad token — reload and re-enter");
+  }
+  return response.json();
+}
+
+const seconds = (ms) => (ms ? `${(ms / MILLISECONDS_PER_SECOND).toFixed(1)}s` : "–");
+const clock = (iso) => (iso ? new Date(iso).toLocaleTimeString() : "–");
+
+function statusColor(status) {
+  if (status === "ok") return "var(--good)";
+  if (status === "error") return "var(--critical)";
+  return "var(--running)";
+}
+
+function showTooltip(event, html) {
+  tooltip.innerHTML = html;
+  tooltip.style.opacity = "1";
+  tooltip.style.left = `${Math.min(event.clientX + 14, innerWidth - 340)}px`;
+  tooltip.style.top = `${event.clientY + 14}px`;
+}
+
+function renderTiles(runs) {
+  const mismatched = runs.filter((run) => run.isMismatch || run.isUndeclared).length;
+  const idleMs = runs.reduce((total, run) => total + (run.serializationCostMs ?? 0), 0);
+  const tokens = runs.reduce((total, run) => total + (run.totalTokens ?? 0), 0);
+  document.getElementById("tiles").innerHTML = [
+    [runs.length, "runs"],
+    [mismatched, "undeclared or mismatched"],
+    [seconds(idleMs), "serialized agent-time"],
+    [tokens.toLocaleString(), "subagent tokens"],
+  ]
+    .map(([value, label]) => `<div><div class="tile-value">${value}</div><div class="tile-label">${label}</div></div>`)
+    .join("");
+}
+
+function verdictCell(run) {
+  if (run.isMismatch) return `<span style="color:var(--critical)">✕ ran as a chain</span>`;
+  if (run.isUndeclared) return `<span style="color:var(--warning)">⚠ undeclared</span>`;
+  return `<span style="color:var(--good)">✓ ok</span>`;
+}
+
+function renderRuns(runs) {
+  document.getElementById("runRows").innerHTML = runs
+    .map(
+      (run) => `<tr data-run="${run.id}" class="${run.id === selectedRunId ? "is-selected" : ""}">
+        <td>${clock(run.started_at)}</td>
+        <td class="mono">${run.id.slice(0, 8)}</td>
+        <td>${run.node_count}</td>
+        <td>${run.peakConcurrency}</td>
+        <td>${run.declared_shape ?? "–"}</td>
+        <td>${run.observedShape}</td>
+        <td>${seconds(run.serializationCostMs)}</td>
+        <td>${verdictCell(run)}</td>
+      </tr>`,
+    )
+    .join("");
+  for (const row of document.querySelectorAll("#runRows tr")) {
+    row.addEventListener("click", () => selectRun(row.dataset.run));
+  }
+}
+
+const nodeEndIso = (node) => node.notified_at ?? (node.is_async ? null : node.ended_at);
+const nodeWorkMs = (node) =>
+  node.true_duration_ms ?? (node.is_async ? null : (node.duration_ms ?? null));
+
+function renderOrchestration(detail) {
+  const { nodes, parallelism, batches, topology, diff, checks, interventions } = detail;
+  const denies = checks.filter((check) => check.would_deny);
+  const batchOf = new Map();
+  for (const batch of batches) for (const id of batch.nodeIds) batchOf.set(id, batch);
+
+  const verdictColor =
+    parallelism.verdict === "parallel"
+      ? "var(--good)"
+      : parallelism.verdict === "attempted, ran serial"
+        ? "var(--critical)"
+        : "var(--warning)";
+
+  const rows = nodes.map((node) => {
+    const batch = batchOf.get(node.id);
+    const isFannedOut = batch && batch.size > 1;
+    const workMs = nodeWorkMs(node);
+    return `<tr class="node-row" data-node="${node.id}">
+      <td>${batch ? batch.index + 1 : "–"}${isFannedOut ? ` <span style="color:var(--good)">×${batch.size}</span>` : ""}</td>
+      <td class="mono">${escapeHtml(node.agent_type ?? node.tool)}</td>
+      <td>${escapeHtml(node.label ?? "–")}</td>
+      <td class="mono">${escapeHtml(node.resolved_model ?? node.model ?? "inherited")}</td>
+      <td>${clock(node.started_at)}</td>
+      <td>${nodeEndIso(node) ? clock(nodeEndIso(node)) : "<span style='color:var(--warning)'>unknown</span>"}</td>
+      <td>${workMs === null ? "–" : seconds(workMs)}</td>
+      <td>${node.total_tokens ? node.total_tokens.toLocaleString() : "–"}</td>
+    </tr>
+    <tr class="node-detail" data-detail="${node.id}" hidden><td colspan="8">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div><div class="edge">sent down ↓</div><pre class="excerpt">${escapeHtml(node.prompt_text ?? "(not captured)")}</pre></div>
+        <div><div class="edge">came back ↑</div><pre class="excerpt">${escapeHtml(node.result_text ?? "(not captured)")}</pre></div>
+      </div></td></tr>`;
+  });
+
+  document.getElementById("orchestration").innerHTML =
+    `<div class="tiles">
+      <div class="tile"><span class="k">parallelism</span>
+        <span class="v" style="color:${verdictColor}">${parallelism.verdict}</span></div>
+      <div class="tile"><span class="k">delegation batches</span>
+        <span class="v">${parallelism.batchCount}, widest ${parallelism.largestBatch}</span></div>
+      <div class="tile"><span class="k">fan-outs achieved</span>
+        <span class="v">${parallelism.achievedCount} of ${parallelism.measuredCount} measured</span></div>
+      <div class="tile"><span class="k">shape</span>
+        <span class="v">declared ${diff.declaredShape ?? "nothing"}, ran ${diff.observedShape}</span></div>
+    </div>
+    ${parallelism.unmeasurableNodeCount > 0
+      ? `<p class="edge" style="color:var(--warning)">${parallelism.unmeasurableNodeCount} background agent(s) never reported a finish time — excluded from the verdict, not counted as parallel.</p>`
+      : ""}
+    ${topology
+      ? `<p class="edge"><b>declared topology</b> — ${escapeHtml(topology.shape ?? "?")}: ${(topology.edges ?? []).map((edge) => `${escapeHtml(edge.from)}→${escapeHtml(edge.to)} carries <i>${escapeHtml(edge.carries ?? "nothing")}</i>`).join("; ") || "no edges"}</p>`
+      : `<p class="edge" style="color:var(--ink-2)">No topology was declared for this run.</p>`}
+    ${denies.length > 0
+      ? `<p class="edge" style="color:var(--critical)"><b>gate fired ${denies.length}×</b> — ${denies.map((check) => escapeHtml((check.reason ?? "").split("\n")[0])).join(" / ")}</p>`
+      : ""}
+    ${interventions.length > 0
+      ? `<p class="edge"><b>you stepped in ${interventions.length}×</b> — ${interventions.map((entry) => `${entry.kind}: “${escapeHtml((entry.quote ?? "").slice(0, 90))}”`).join(" · ")}</p>`
+      : ""}
+    <table style="margin-top:10px"><thead><tr>
+      <th>batch</th><th>agent</th><th>task</th><th>model</th>
+      <th>spawned</th><th>finished</th><th>worked</th><th>tokens</th>
+    </tr></thead><tbody>${rows.join("")}</tbody></table>
+    <p class="edge" style="color:var(--ink-2)">Click a row to see what was sent down and what came back.</p>`;
+
+  for (const row of document.querySelectorAll(".node-row")) {
+    row.addEventListener("click", () => {
+      const panel = document.querySelector(`[data-detail="${row.dataset.node}"]`);
+      panel.hidden = !panel.hidden;
+    });
+  }
+}
+
+function renderTimeline(detail) {
+  const { nodes, edges, diff, run } = detail;
+  document.getElementById("detailTitle").textContent =
+    `Timeline — declared ${diff.declaredShape ?? "nothing"}, ran ${diff.observedShape}`;
+  renderOrchestration(detail);
+  if (nodes.length === 0) {
+    document.getElementById("timeline").innerHTML = `<p class="empty">No nodes in this run.</p>`;
+    return;
+  }
+  const starts = nodes.map((node) => Date.parse(node.started_at));
+  const ends = nodes.map((node) => Date.parse(nodeEndIso(node) ?? node.started_at));
+  const originMs = Math.min(...starts);
+  const spanMs = Math.max(Math.max(...ends) - originMs, 1);
+
+  document.getElementById("timeline").innerHTML = nodes
+    .map((node) => {
+      const offsetPercent = ((Date.parse(node.started_at) - originMs) / spanMs) * 100;
+      const widthPercent = Math.max(((nodeWorkMs(node) ?? 0) / spanMs) * 100, TRACK_MIN_PERCENT);
+      const isUnknownEnd = nodeEndIso(node) === null;
+      return `<div style="display:grid;grid-template-columns:190px 1fr;gap:12px;align-items:center;margin:2px 0">
+        <div class="bar-label">${escapeHtml(node.agent_type ?? node.tool)} · ${escapeHtml(node.label ?? "")}</div>
+        <div class="track"><div class="bar" data-node="${node.id}"
+          style="left:${offsetPercent}%;width:${widthPercent}%;background:${statusColor(node.status)};${isUnknownEnd ? "opacity:.35" : ""}"></div></div>
+      </div>`;
+    })
+    .join("");
+
+  for (const bar of document.querySelectorAll(".bar")) {
+    const node = nodes.find((candidate) => candidate.id === bar.dataset.node);
+    bar.addEventListener("mousemove", (event) =>
+      showTooltip(
+        event,
+        `<b>${node.label ?? node.tool}</b><br>` +
+          `${node.agent_type ?? "–"} · ${node.resolved_model ?? node.model ?? "inherited"}<br>` +
+          `${node.status} · ${seconds(node.duration_ms)}` +
+          `${node.total_tokens ? ` · ${node.total_tokens.toLocaleString()} tokens` : ""}` +
+          `${node.tool_use_count ? ` · ${node.tool_use_count} tool calls` : ""}` +
+          `<br><span class="mono">${node.agent_id ?? node.id}</span>`,
+      ),
+    );
+    bar.addEventListener("mouseleave", () => (tooltip.style.opacity = "0"));
+  }
+
+  const declared = edges.filter((edge) => edge.kind === "declared");
+  const observed = edges.filter((edge) => edge.kind === "observed");
+  document.getElementById("edges").innerHTML =
+    `<p class="edge" style="margin-top:14px">` +
+    `<b>declared</b> ${declared.map((edge) => `${edge.from_ref}→${edge.to_ref} (${edge.carries ?? "?"})`).join(", ") || "none"}<br>` +
+    `<b>observed serialization</b> ${observed.length} edge${observed.length === 1 ? "" : "s"}` +
+    `${observed.length === 0 ? " — nothing waited on anything" : ""}<br>` +
+    `<span class="mono">${run.cwd ?? ""}</span></p>`;
+}
+
+async function selectRun(runId) {
+  selectedRunId = runId;
+  for (const row of document.querySelectorAll("#runRows tr")) {
+    row.classList.toggle("is-selected", row.dataset.run === runId);
+  }
+  renderTimeline(await api(`/v1/runs/${encodeURIComponent(runId)}`));
+}
+
+function renderChecks(checks) {
+  document.getElementById("checkRows").innerHTML =
+    checks
+      .map((check) => {
+        const outcome = check.enforced
+          ? `<span style="color:var(--critical)">✕ denied</span>`
+          : check.would_deny
+            ? `<span style="color:var(--warning)">⚠ would deny</span>`
+            : `<span style="color:var(--good)">✓ allowed</span>`;
+        return `<tr><td>${clock(check.ts)}</td><td>${check.tool ?? "–"}</td>
+          <td class="mono">${check.rule ?? "–"}</td><td>${outcome}</td></tr>`;
+      })
+      .join("") || `<tr><td colspan="4" class="empty">No checks yet.</td></tr>`;
+}
+
+function renderEvents(events) {
+  document.getElementById("eventRows").innerHTML =
+    events
+      .map((event) => {
+        const what =
+          event.payload.skill ?? event.payload.label ?? event.payload.agentType ?? event.kind;
+        return `<tr><td>${clock(event.ts)}</td><td>${event.kind}</td>
+          <td>${what}</td><td class="mono">${(event.session_id ?? "").slice(0, 8)}</td></tr>`;
+      })
+      .join("") || `<tr><td colspan="4" class="empty">Nothing recorded yet.</td></tr>`;
+}
+
+function renderWorkflows(workflows) {
+  document.getElementById("workflowRows").innerHTML =
+    workflows
+      .map((workflow) => {
+        const state = workflow.isCandidate
+          ? `<span style="color:var(--warning)">⚠ candidate</span>`
+          : `<span style="color:var(--good)">✓ registered</span>`;
+        const actions = workflow.isCandidate
+          ? `<button data-promote="${workflow.id}">promote</button>
+             <button data-reject="${workflow.id}">reject</button>`
+          : "";
+        return `<tr><td>${state}</td><td class="mono">${workflow.name ?? workflow.id}</td>
+          <td>${workflow.runCount}</td><td>${workflow.lineCount} lines</td>
+          <td>${workflow.description ?? workflow.provenance ?? "–"}</td><td>${actions}</td></tr>`;
+      })
+      .join("") || `<tr><td colspan="6" class="empty">No workflow scripts yet.</td></tr>`;
+
+  for (const button of document.querySelectorAll("[data-promote]")) {
+    button.addEventListener("click", async () => {
+      await api("/v1/workflows/promote", { method: "POST", body: JSON.stringify({ id: button.dataset.promote }) });
+      await refresh();
+    });
+  }
+  for (const button of document.querySelectorAll("[data-reject]")) {
+    button.addEventListener("click", async () => {
+      await api("/v1/workflows/reject", { method: "POST", body: JSON.stringify({ id: button.dataset.reject }) });
+      await refresh();
+    });
+  }
+}
+
+const escapeHtml = (text) =>
+  String(text ?? "").replace(
+    /[&<>"']/g,
+    (character) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character],
+  );
+
+const KIND_BADGES = {
+  rule: ["rule", "var(--running)"],
+  hook: ["hook — fires automatically", "var(--critical)"],
+  question: ["question", "var(--warning)"],
+};
+
+function proposalCard(proposal) {
+  const [badge, color] = KIND_BADGES[proposal.kind] ?? [proposal.kind, "var(--ink-2)"];
+  const applied = proposal.applies?.rule ?? proposal.applies?.command ?? proposal.applies?.note;
+  return `<div style="padding:12px 0;border-bottom:1px solid var(--grid)">
+    <div style="display:flex;gap:10px;align-items:baseline">
+      <span style="color:${color};font-size:11px;text-transform:uppercase">${escapeHtml(badge)}</span>
+      <strong>${escapeHtml(proposal.title)}</strong>
+    </div>
+    <p style="color:var(--ink-2);margin:6px 0">${escapeHtml(proposal.why)}</p>
+    <p style="color:var(--ink-2);margin:6px 0;font-style:italic">${escapeHtml(proposal.evidence)}</p>
+    <p class="mono" style="margin:6px 0;font-size:12px">${escapeHtml(applied)}</p>
+    <button data-accept="${proposal.id}">accept</button>
+    <button data-rejectProposal="${proposal.id}">reject</button>
+  </div>`;
+}
+
+function decidedLine(proposal) {
+  const mark = proposal.status === "accepted" ? "✓" : "✕";
+  const color = proposal.status === "accepted" ? "var(--good)" : "var(--ink-2)";
+  return `<div style="padding:4px 0;color:var(--ink-2)">
+    <span style="color:${color}">${mark}</span> ${escapeHtml(proposal.title)}</div>`;
+}
+
+function renderProposals(proposals) {
+  const pending = proposals.filter((proposal) => proposal.status === "pending");
+  const decided = proposals.filter((proposal) => proposal.status !== "pending");
+  document.getElementById("proposalRows").innerHTML =
+    (pending.map(proposalCard).join("") ||
+      `<p class="empty">Nothing waiting. Run /lesson-harvest to generate more.</p>`) +
+    (decided.length > 0
+      ? `<h3 style="margin:14px 0 4px;font-size:12px;color:var(--ink-2)">decided</h3>${decided.map(decidedLine).join("")}`
+      : "");
+
+  for (const button of document.querySelectorAll("[data-accept], [data-rejectProposal]")) {
+    button.addEventListener("click", async () => {
+      const id = button.dataset.accept ?? button.dataset.rejectproposal;
+      const status = button.dataset.accept ? "accepted" : "rejected";
+      await api("/v1/proposals/decide", { method: "POST", body: JSON.stringify({ id, status }) });
+      await refresh();
+    });
+  }
+}
+
+function renderDoctor(checks) {
+  const marks = { pass: ["✓", "var(--good)"], warn: ["⚠", "var(--warning)"], fail: ["✕", "var(--critical)"] };
+  document.getElementById("doctorRows").innerHTML = checks
+    .map((entry) => {
+      const [icon, color] = marks[entry.status];
+      return `<div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--grid)">
+        <span style="color:${color};width:14px">${icon}</span>
+        <span style="width:170px">${entry.name}</span>
+        <span style="color:var(--ink-2)">${entry.detail}</span></div>`;
+    })
+    .join("");
+}
+
+function renderStatus(state) {
+  const isEnforcing = state.isEnforcing;
+  document.getElementById("statusText").textContent = state.isPaused
+    ? "paused"
+    : isEnforcing
+      ? "enforcing"
+      : "shadow mode";
+  document.querySelector("#statusPill .dot").style.background = state.isPaused
+    ? "var(--warning)"
+    : isEnforcing
+      ? "var(--critical)"
+      : "var(--good)";
+  document.getElementById("enforceToggle").textContent = state.config.enforce
+    ? "turn enforcement off"
+    : "turn enforcement on";
+  document.getElementById("pauseToggle").textContent = state.isPaused ? "resume" : "pause";
+}
+
+async function refresh() {
+  const [state, runList, checkList, eventList, workflowList, doctorReport, proposalList] =
+    await Promise.all([
+      api("/v1/config"),
+      api("/v1/runs?limit=25"),
+      api("/v1/policy/checks?limit=15"),
+      api("/v1/events?limit=25"),
+      api("/v1/workflows"),
+      api("/v1/doctor"),
+      api("/v1/proposals"),
+    ]);
+  renderStatus(state);
+  renderProposals(proposalList.proposals);
+  renderTiles(runList.runs);
+  renderRuns(runList.runs);
+  renderChecks(checkList.checks);
+  renderEvents(eventList.events);
+  renderWorkflows(workflowList.workflows);
+  renderDoctor(doctorReport.checks);
+  if (!selectedRunId && runList.runs.length > 0) await selectRun(runList.runs[0].id);
+  else if (selectedRunId) await selectRun(selectedRunId);
+}
+
+async function postConfig(patch) {
+  renderStatus(await api("/v1/config", { method: "POST", body: JSON.stringify(patch) }));
+  await refresh();
+}
+
+document.getElementById("refresh").addEventListener("click", refresh);
+document.getElementById("enforceToggle").addEventListener("click", async () => {
+  const state = await api("/v1/config");
+  await postConfig({ enforce: !state.config.enforce });
+});
+document.getElementById("pauseToggle").addEventListener("click", async () => {
+  const state = await api("/v1/config");
+  await postConfig({ isPaused: !state.isPaused });
+});
+document.getElementById("themeToggle").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem(THEME_KEY, next);
+});
+
+const savedTheme = localStorage.getItem(THEME_KEY);
+if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+refresh().catch((error) => (document.body.textContent = String(error)));
+setInterval(() => refresh().catch(() => {}), REFRESH_INTERVAL_MS);
+</script>
+</body>
+</html>

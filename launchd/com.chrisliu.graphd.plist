@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.chrisliu.graphd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/chrisliu/.nvm/versions/node/v22.22.3/bin/node</string>
+    <string>/Users/chrisliu/romp/graph-mechanism/bin/graphd.mjs</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/graphd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/graphd.err</string>
+</dict>
+</plist>

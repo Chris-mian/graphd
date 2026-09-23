@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Weekly lesson harvest. Unlike the import job this one spends model tokens, so it runs only
+     because the proposal was accepted. It writes a report and proposes rules; it applies none. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.chrisliu.graphd-harvest</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>/Users/chrisliu/romp/graph-mechanism/bin/run-harvest.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>1</integer>
+    <key>Hour</key>
+    <integer>8</integer>
+    <key>Minute</key>
+    <integer>45</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/graphd-harvest.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/graphd-harvest.err</string>
+</dict>
+</plist>
