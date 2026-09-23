@@ -42,12 +42,18 @@ const SELF_CORRECTION_PATTERNS = [
   /\bi was wrong\b/i,
   /\b(my|that was a) (mistake|error)\b/i,
   /\bi misread\b/i,
-  /\bcorrection[:—-]/i,
   /\bi (incorrectly|wrongly) (said|claimed|assumed|reported)\b/i,
   /\bearlier i (said|claimed|reported)\b.*\b(but|actually|in fact)\b/i,
   /\bthat (claim|number|statement) was (wrong|bogus|incorrect)\b/i,
   /\bscratch that\b/i,
 ];
+
+/**
+ * Self-correction phrases that only count near the start of a turn. Deep in a long report,
+ * "correction" is the agent narrating someone else's, not making one. The trailing punctuation
+ * excludes a word-internal hyphen so "correction-based" does not read as a marker.
+ */
+const OPENING_SELF_CORRECTION_PATTERNS = [/\bcorrection\b\s*(?::|—|-(?=\s))/i];
 
 /** Strips romp prompt wrappers and injected blocks, leaving what the human actually typed. */
 export function humanText(rawContent) {
@@ -82,15 +88,17 @@ export function classifyHumanTurn(rawContent) {
 /** Classifies assistant text as a self-correction, or null. */
 export function classifyAssistantText(text) {
   if (typeof text !== "string" || text.length === 0) return null;
-  return matchesAny(SELF_CORRECTION_PATTERNS, text)
-    ? INTERVENTION_KINDS.SELF_CORRECTION
-    : null;
+  const isSelfCorrection =
+    matchesAny(SELF_CORRECTION_PATTERNS, text) ||
+    matchesAny(OPENING_SELF_CORRECTION_PATTERNS, text.slice(0, OPENING_WINDOW));
+  return isSelfCorrection ? INTERVENTION_KINDS.SELF_CORRECTION : null;
 }
 
 /** Returns the sentence that triggered the match, so a report quotes the retraction itself. */
 export function matchedSentence(text) {
+  const allPatterns = [...SELF_CORRECTION_PATTERNS, ...OPENING_SELF_CORRECTION_PATTERNS];
   const sentences = String(text).split(SENTENCE_SPLIT_PATTERN);
-  const hit = sentences.find((sentence) => matchesAny(SELF_CORRECTION_PATTERNS, sentence));
+  const hit = sentences.find((sentence) => matchesAny(allPatterns, sentence));
   return toQuote(hit ?? text);
 }
 
