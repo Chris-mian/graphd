@@ -142,7 +142,10 @@ function printStats(stats) {
   process.stdout.write(
     `runs=${stats.runCount} agents=${stats.nodeCount} ` +
       `multi-agent=${stats.multiAgentRunCount} never-parallel=${stats.sequentialRunCount}\n` +
-      `tokens=${stats.totalTokens.toLocaleString()} spend~${formatUsd(stats.totalCostUsd)} ` +
+      `tokens=${stats.totalTokens.toLocaleString()} ` +
+      `spend~${formatUsd(stats.totalCostUsd)} ` +
+      `(${formatUsd(stats.totalCostLowUsd)}–${formatUsd(stats.totalCostHighUsd)}, ` +
+      `combined totals split at an assumed 90% input) ` +
       `serialized=${formatMinutes(stats.sequentialSerializedMs)}\n\nby agent type\n`,
   );
   for (const bucket of stats.byAgentType) {

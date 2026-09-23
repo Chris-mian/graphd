@@ -19,13 +19,10 @@ function selectRunsWithNodes(store) {
 
 function summarizeRun({ run, nodes }) {
   const totalTokens = nodes.reduce((sum, node) => sum + (node.total_tokens ?? 0), 0);
-  const costUsd = nodes.reduce(
-    (sum, node) =>
-      sum +
-      estimateCost({ totalTokens: node.total_tokens, model: node.resolved_model ?? node.model })
-        .estimate,
-    0,
+  const costs = nodes.map((node) =>
+    estimateCost({ totalTokens: node.total_tokens, model: node.resolved_model ?? node.model }),
   );
+  const sumOfCosts = (field) => costs.reduce((sum, cost) => sum + cost[field], 0);
   return {
     runId: run.id,
     cwd: run.cwd,
@@ -34,7 +31,9 @@ function summarizeRun({ run, nodes }) {
     peak: peakConcurrency(nodes),
     serializedMs: serializationCostMs(nodes),
     totalTokens,
-    costUsd,
+    costUsd: sumOfCosts("estimate"),
+    costLowUsd: sumOfCosts("low"),
+    costHighUsd: sumOfCosts("high"),
     agentTypes: nodes.map((node) => node.agent_type ?? node.tool),
   };
 }
@@ -95,6 +94,8 @@ export function computeStats(store) {
     sequentialRunCount: sequential.length,
     totalTokens: summaries.reduce((sum, entry) => sum + entry.totalTokens, 0),
     totalCostUsd: summaries.reduce((sum, entry) => sum + entry.costUsd, 0),
+    totalCostLowUsd: summaries.reduce((sum, entry) => sum + entry.costLowUsd, 0),
+    totalCostHighUsd: summaries.reduce((sum, entry) => sum + entry.costHighUsd, 0),
     sequentialSerializedMs: sequential.reduce((sum, entry) => sum + entry.serializedMs, 0),
     sequentialCostUsd: sequential.reduce((sum, entry) => sum + entry.costUsd, 0),
     byAgentType: tallyBy(allNodes, (node) => node.agent_type).slice(0, TOP_LIST_LENGTH),
