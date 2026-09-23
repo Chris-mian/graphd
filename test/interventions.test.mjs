@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { INTERVENTION_KINDS, classifyAssistantText, matchedSentence } from "../src/interventions.mjs";
+import {
+  INTERVENTION_KINDS,
+  classifyAssistantText,
+  classifyHumanTurn,
+  matchedSentence,
+} from "../src/interventions.mjs";
 
 const SELF_CORRECTION = INTERVENTION_KINDS.SELF_CORRECTION;
 
@@ -35,4 +40,14 @@ test("non-corrections and empty input classify as null", () => {
 test("the quote is the sentence carrying the correction", () => {
   const text = "Correction: the gate is off. Everything else in the summary holds.";
   assert.equal(matchedSentence(text), "Correction: the gate is off.");
+});
+
+test("romp recap blocks are not human turns", () => {
+  const recap = "<blocked-goals 22792cd2> 1. Offered to squash the two cancelling commits";
+  assert.equal(classifyHumanTurn(recap), null);
+  assert.equal(classifyHumanTurn("<open-goals 22792cd2> no, that's wrong"), null);
+});
+
+test("a real interrupt still classifies", () => {
+  assert.equal(classifyHumanTurn("[Request interrupted by user]"), INTERVENTION_KINDS.INTERRUPT);
 });

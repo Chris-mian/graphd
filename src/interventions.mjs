@@ -16,7 +16,8 @@ const MACHINE_PREFIXES = [
 const OPENING_WINDOW = 90;
 
 /** romp recap blocks quote earlier turns verbatim; counting them double-counts one event. */
-const SESSION_MANAGER_RECAP_PATTERN = /<(goal|unit|segment|turn|work)\s+[0-9a-f]{6,}>|romp-system/i;
+const SESSION_MANAGER_RECAP_PATTERN =
+  /<[a-z-]*(goals?|unit|segment|turn|work)\s+[0-9a-f]{6,}>|romp-system/i;
 
 export const INTERVENTION_KINDS = {
   INTERRUPT: "interrupt",
