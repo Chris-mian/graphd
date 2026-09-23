@@ -18,27 +18,40 @@ const RECENT_STOP_LIMIT = 8;
 /** Themes in the interventions that carry text, as patterns over the quote. */
 export const INTERVENTION_THEMES = [
   {
-    id: "impatience",
-    label: "made to wait — too slow, or stopping to ask when it should continue",
+    id: "standing-rule",
+    label: "stated a standing preference that should have been a durable rule",
     pattern:
-      /\b(wait|waiting|dont stop|don'?t stop|keep going|too long|annoying|i don'?t want to wait|go ahead|dont wait|don'?t wait)\b/i,
+      /\b(add this to your|coding principles|i (don'?t|dont|do not) want (my|your|you|them|it)\b|i prefer|why can you not|always have|from now on|never .* again|keep context clean)/i,
   },
   {
-    id: "lost-context",
-    label: "did not know something already established",
+    id: "tooling-broken",
+    label: "the tooling or the session itself stopped working",
     pattern:
-      /\b(discussed (multiple times|before|already)|you didn'?t know|already (told|said|discussed)|other sessions|pull in latest|give new context|how could i have known)\b/i,
+      /\b(not working|isn'?t working|not taking messages|not showing up|stuck|hung|hanging|no agent executing|not in working status|nothing seemed to be invoked|what is happening here)\b/i,
+  },
+  {
+    id: "impatience",
+    label: "made to wait — too slow, or stopping when it should have continued",
+    pattern:
+      /\b(wait|waiting|dont stop|don'?t stop|keep going|too long|annoying|taking so long|go ahead|until you finished)\b/i,
   },
   {
     id: "wrong-target",
     label: "worked on the wrong thing",
     pattern:
-      /\b(that'?s not|i asked for|not what i|instead of|you only did|i don'?t want|revert|no[,.]? i)\b/i,
+      /\b(that'?s not|i asked for|not what i|instead of|you only did|i meant|revert|no[,.]? i|my bad)\b/i,
   },
   {
     id: "wrong-technical-call",
     label: "wrong technical decision, corrected with specifics",
-    pattern: /\b(should consult|dual-?read|backfill|enqueue|the row|prod|staging|cron|dlq)\b/i,
+    pattern:
+      /\b(should consult|dual-?read|backfill|enqueue|the row|prod|staging|cron|dlq|lambda|event driven|why are the workers|job runner|celery)\b/i,
+  },
+  {
+    id: "unreadable-output",
+    label: "the report or PR text was not usable as written",
+    pattern:
+      /\b(hard to read|lost my trust|just give me|corrected handoff|declarative and honest|still hard)\b/i,
   },
 ];
 

@@ -244,3 +244,37 @@ test("a slash command or a resume is not a reason", () => {
   assert.equal(followupReason("[Request interrupted by user]"), null);
   assert.equal(followupReason("stop polling, run it in the background"), "stop polling, run it in the background");
 });
+
+test("each theme is pinned by a quote taken from the record", () => {
+  const store = freshStore();
+  const quotes = [
+    ["standing-rule", "i dont want my sessions to message each other"],
+    ["tooling-broken", "project-man session is not taking messages in"],
+    ["impatience", "still waiting a long time. i dont want to wait"],
+    ["wrong-target", "you only did context management where i asked for project management"],
+    ["wrong-technical-call", "why are the workers in USE2 if we copy from USE1"],
+    ["unreadable-output", "the PR description is still hard to read"],
+  ];
+  quotes.forEach(([, quote], index) =>
+    addIntervention(store, { id: `q${index}`, ts: `2026-09-0${index + 1}T00:00:00Z`, quote }),
+  );
+
+  const breakdown = themeBreakdown(store);
+  assert.equal(breakdown.unmatched, 0);
+  for (const [themeId] of quotes) {
+    assert.ok(
+      breakdown.themes.find((theme) => theme.id === themeId).count >= 1,
+      `${themeId} matched nothing`,
+    );
+  }
+});
+
+test("a machine-injected turn is not a reason", () => {
+  assert.equal(followupReason("Set model to claude-opus-4-8</local-command-stdout>"), null);
+  assert.equal(followupReason("<bash-input>aws sso login --profile=suno</bash-input>"), null);
+  assert.equal(followupReason("retry <!-- romp-injected -->"), null);
+  assert.equal(
+    followupReason('Another Claude session sent a message: <teammate-message teammate_id="x">'),
+    null,
+  );
+});
