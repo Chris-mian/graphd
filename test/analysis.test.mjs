@@ -66,8 +66,8 @@ test("an unmeasurable member does not split a batch", () => {
 
 test("dedupe merges the hook row with the backfill row but keeps real retries apart", () => {
   const hookRow = { ...asyncNode("hash-1", "2026-09-21T09:00:00.100Z", null, "PR C"), is_async: 0 };
-  const backfillRow = asyncNode("toolu-1", "2026-09-21T09:00:00.000Z", "2026-09-21T09:06:00.000Z", "PR C");
-  const retryRow = asyncNode("toolu-2", "2026-09-21T09:20:00.000Z", "2026-09-21T09:26:00.000Z", "PR C");
+  const backfillRow = asyncNode("toolu_1", "2026-09-21T09:00:00.000Z", "2026-09-21T09:06:00.000Z", "PR C");
+  const retryRow = asyncNode("toolu_2", "2026-09-21T09:20:00.000Z", "2026-09-21T09:26:00.000Z", "PR C");
 
   const merged = dedupeNodes([hookRow, backfillRow, retryRow]);
   assert.equal(merged.length, 2);
