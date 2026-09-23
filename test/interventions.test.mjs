@@ -51,3 +51,13 @@ test("romp recap blocks are not human turns", () => {
 test("a real interrupt still classifies", () => {
   assert.equal(classifyHumanTurn("[Request interrupted by user]"), INTERVENTION_KINDS.INTERRUPT);
 });
+
+test("an interrupt delivered as a block array still classifies", () => {
+  const blocks = [{ type: "text", text: "[Request interrupted by user]" }];
+  assert.equal(classifyHumanTurn(blocks), INTERVENTION_KINDS.INTERRUPT);
+});
+
+test("a correction delivered as a block array still classifies", () => {
+  const blocks = [{ type: "text", text: "no, that's wrong — revert it" }];
+  assert.equal(classifyHumanTurn(blocks), INTERVENTION_KINDS.CORRECTION);
+});

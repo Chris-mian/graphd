@@ -109,3 +109,15 @@ CREATE TABLE IF NOT EXISTS interventions (
 
 CREATE INDEX IF NOT EXISTS interventions_ts_idx ON interventions (ts DESC);
 CREATE INDEX IF NOT EXISTS interventions_run_idx ON interventions (run_id);
+
+-- Every session the importer saw, whether or not it spawned an agent or needed an
+-- intervention. `runs` holds only sessions with agents, so it cannot serve as the denominator
+-- for a per-session rate: a week of clean sessions would not be counted at all.
+CREATE TABLE IF NOT EXISTS sessions (
+  id         TEXT PRIMARY KEY,
+  cwd        TEXT,
+  started_at TEXT NOT NULL,
+  ended_at   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS sessions_started_idx ON sessions (started_at DESC);

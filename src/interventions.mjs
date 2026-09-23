@@ -56,11 +56,22 @@ const SELF_CORRECTION_PATTERNS = [
  */
 const OPENING_SELF_CORRECTION_PATTERNS = [/\bcorrection\b\s*(?::|—|-(?=\s))/i];
 
+/** Flattens a turn's content, which the transcript writes either as a string or a block array. */
+export function contentText(rawContent) {
+  if (typeof rawContent === "string") return rawContent;
+  if (!Array.isArray(rawContent)) return "";
+  return rawContent
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("\n");
+}
+
 /** Strips romp prompt wrappers and injected blocks, leaving what the human actually typed. */
 export function humanText(rawContent) {
-  if (typeof rawContent !== "string") return "";
-  const wrapped = ROMP_PROMPT_PATTERN.exec(rawContent);
-  const inner = wrapped ? wrapped[1] : rawContent;
+  const raw = contentText(rawContent);
+  if (!raw) return "";
+  const wrapped = ROMP_PROMPT_PATTERN.exec(raw);
+  const inner = wrapped ? wrapped[1] : raw;
   return inner.replace(WRAPPER_BLOCK_PATTERN, "").trim();
 }
 
@@ -74,10 +85,9 @@ function matchesAny(patterns, text) {
  * ordinary prose, not a redirect.
  */
 export function classifyHumanTurn(rawContent) {
-  if (typeof rawContent === "string" && SESSION_MANAGER_RECAP_PATTERN.test(rawContent)) return null;
-  if (typeof rawContent === "string" && rawContent.includes(INTERRUPT_MARKER)) {
-    return INTERVENTION_KINDS.INTERRUPT;
-  }
+  const raw = contentText(rawContent);
+  if (SESSION_MANAGER_RECAP_PATTERN.test(raw)) return null;
+  if (raw.includes(INTERRUPT_MARKER)) return INTERVENTION_KINDS.INTERRUPT;
   const text = humanText(rawContent);
   if (!text) return null;
   if (MACHINE_PREFIXES.some((prefix) => text.startsWith(prefix))) return null;

@@ -4,19 +4,37 @@ const TOP_LIST_LENGTH = 8;
 /**
  * Interventions per session, by week. `perSession` is the autonomy metric and counts
  * interrupts and corrections only; self-corrections get their own series.
+ *
+ * The denominator is every session that week, taken from `sessions`. Counting distinct
+ * `run_id` within `interventions` would exclude clean sessions, so the rate could never fall
+ * as autonomy improved.
  */
 export function autonomyTrend(store) {
   return store
     .prepare(
-      `SELECT strftime('%Y-W%W', ts) AS week,
-              COUNT(*) AS interventionCount,
-              COUNT(DISTINCT run_id) AS sessionCount,
-              SUM(kind = 'interrupt') AS interruptCount,
-              SUM(kind = 'correction') AS correctionCount,
-              SUM(kind = 'self_correction') AS selfCorrectionCount
-         FROM interventions
-        GROUP BY week
-        ORDER BY week`,
+      `WITH weekly_sessions AS (
+         SELECT strftime('%Y-W%W', started_at) AS week, COUNT(*) AS sessionCount
+           FROM sessions
+          GROUP BY week
+       ),
+       weekly_interventions AS (
+         SELECT strftime('%Y-W%W', ts) AS week,
+                COUNT(*) AS interventionCount,
+                SUM(kind = 'interrupt') AS interruptCount,
+                SUM(kind = 'correction') AS correctionCount,
+                SUM(kind = 'self_correction') AS selfCorrectionCount
+           FROM interventions
+          GROUP BY week
+       )
+       SELECT weekly_sessions.week AS week,
+              weekly_sessions.sessionCount AS sessionCount,
+              COALESCE(weekly_interventions.interventionCount, 0) AS interventionCount,
+              COALESCE(weekly_interventions.interruptCount, 0) AS interruptCount,
+              COALESCE(weekly_interventions.correctionCount, 0) AS correctionCount,
+              COALESCE(weekly_interventions.selfCorrectionCount, 0) AS selfCorrectionCount
+         FROM weekly_sessions
+         LEFT JOIN weekly_interventions ON weekly_interventions.week = weekly_sessions.week
+        ORDER BY weekly_sessions.week`,
     )
     .all()
     .map((row) => {

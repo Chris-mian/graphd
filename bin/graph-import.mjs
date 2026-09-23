@@ -18,6 +18,18 @@ const PROMPT_SHA_LENGTH = 16;
 const MILLISECONDS_PER_DAY = 86_400_000;
 const MAX_TEXT_CHARS = 4000;
 
+/**
+ * Working directories that are test scratch rather than real work. romp's own suite replays
+ * recorded turns through a scratch checkout, so those transcripts carry synthetic interrupts and
+ * duplicates of prompts already counted under their real session.
+ */
+const EXCLUDED_CWD_PATTERNS = [/\/judge-scratch(\/|$)/, /\/\.local\/state\/romp\//, /\/romp-tests?-/];
+
+/** Whether a transcript's working directory is test scratch and must not be measured. */
+export function isScratchCwd(cwd) {
+  return typeof cwd === "string" && EXCLUDED_CWD_PATTERNS.some((pattern) => pattern.test(cwd));
+}
+
 function promptSha(sessionId, tool, prompt) {
   return createHash("sha256")
     .update(`${sessionId}|${tool}|${prompt ?? ""}`)
@@ -37,13 +49,14 @@ function transcriptPaths() {
     });
 }
 
-/** Collects spawn records, their matching results, and human/agent interventions. */
+/** Collects the session itself, spawn records, their results, and human/agent interventions. */
 function parseTranscript(path) {
   const spawns = [];
   const resultsByToolUseId = new Map();
   const interventions = [];
   const entries = [];
   let lastToolName = null;
+  const session = { id: null, cwd: null, startedAt: null, endedAt: null };
 
   for (const line of readFileSync(path, "utf8").split("\n")) {
     if (!line.startsWith("{")) continue;
@@ -54,6 +67,14 @@ function parseTranscript(path) {
       continue;
     }
     entries.push(entry);
+    if (!entry.isSidechain) {
+      session.id ??= entry.sessionId ?? entry.session_id ?? null;
+      session.cwd ??= entry.cwd ?? null;
+      if (entry.timestamp) {
+        session.startedAt ??= entry.timestamp;
+        session.endedAt = entry.timestamp;
+      }
+    }
     const blocks = Array.isArray(entry.message?.content) ? entry.message.content : [];
 
     if (entry.type === "user" && !entry.isSidechain) {
@@ -111,7 +132,7 @@ function parseTranscript(path) {
       }
     }
   }
-  return { spawns, resultsByToolUseId, interventions, entries };
+  return { session, spawns, resultsByToolUseId, interventions, entries };
 }
 
 /** Older transcripts carry no totalDurationMs; the result timestamp still bounds the node. */
@@ -188,6 +209,18 @@ function insertSpawn(store, spawn, completion) {
     );
 }
 
+function upsertSession(store, session) {
+  store
+    .prepare(
+      `INSERT INTO sessions (id, cwd, started_at, ended_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET
+         cwd      = COALESCE(excluded.cwd, sessions.cwd),
+         ended_at = MAX(COALESCE(sessions.ended_at, ''), COALESCE(excluded.ended_at, ''))`,
+    )
+    .run(session.id, session.cwd, session.startedAt, session.endedAt);
+}
+
 function insertIntervention(store, intervention) {
   store
     .prepare(
@@ -216,11 +249,19 @@ let importedNodes = 0;
 let scannedTranscripts = 0;
 let importedInterventions = 0;
 let reconciledCompletions = 0;
+let skippedScratch = 0;
 
 store.exec("BEGIN");
 for (const path of transcriptPaths()) {
+  const { session, spawns, resultsByToolUseId, interventions, entries } = parseTranscript(path);
+  if (isScratchCwd(session.cwd)) {
+    skippedScratch += 1;
+    continue;
+  }
   scannedTranscripts += 1;
-  const { spawns, resultsByToolUseId, interventions, entries } = parseTranscript(path);
+  if (session.id && session.startedAt && Date.parse(session.startedAt) >= cutoffMs) {
+    upsertSession(store, session);
+  }
   for (const intervention of interventions) {
     if (!intervention.id || !intervention.runId || !intervention.ts) continue;
     if (Date.parse(intervention.ts) < cutoffMs) continue;
@@ -246,6 +287,7 @@ for (const path of transcriptPaths()) {
 store.exec("COMMIT");
 
 process.stdout.write(
-  `scanned ${scannedTranscripts} transcripts, imported ${importedNodes} agent nodes, ` +
-    `${importedInterventions} interventions, reconciled ${reconciledCompletions} async completions\n`,
+  `scanned ${scannedTranscripts} transcripts (${skippedScratch} scratch skipped), ` +
+    `imported ${importedNodes} agent nodes, ${importedInterventions} interventions, ` +
+    `reconciled ${reconciledCompletions} async completions\n`,
 );
