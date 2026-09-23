@@ -7,7 +7,6 @@
 set -uo pipefail
 
 readonly REPO_DIR="/Users/chrisliu/romp/graph-mechanism"
-readonly CLAUDE_BIN="/opt/homebrew/bin/claude"
 readonly IMPORT_WINDOW_DAYS=8
 readonly HARVEST_TIMEOUT_SECONDS=1800
 
@@ -30,15 +29,31 @@ log "harvest starting"
   exit 0
 }
 
+# The native build in ~/.local/bin wins over a package-managed one, which lags the model
+# defaults. Resolved rather than hardcoded so replacing one install does not break the job.
+readonly CLAUDE_CANDIDATES=(
+  "${HOME}/.local/bin/claude"
+  "/opt/homebrew/bin/claude"
+)
+claude_bin=""
+for candidate in "${CLAUDE_CANDIDATES[@]}"; do
+  if [[ -x "$candidate" ]]; then
+    claude_bin="$candidate"
+    break
+  fi
+done
+[[ -n "$claude_bin" ]] || claude_bin="$(command -v claude 2>/dev/null || true)"
+
 # A harvest that cannot reach the model should leave last week's report in place rather than
 # half-write a new one.
-command -v "$CLAUDE_BIN" >/dev/null 2>&1 || {
-  log "no claude binary at ${CLAUDE_BIN}, skipping harvest"
+if [[ -z "$claude_bin" ]]; then
+  log "no claude binary found, skipping harvest"
   exit 0
-}
+fi
+log "using ${claude_bin} ($("$claude_bin" --version 2>/dev/null || echo 'version unknown'))"
 
 cd "$REPO_DIR" || exit 0
-"$CLAUDE_BIN" -p \
+"$claude_bin" -p \
   --permission-mode acceptEdits \
   --model "$HARVEST_MODEL" \
   --max-turns 60 \
