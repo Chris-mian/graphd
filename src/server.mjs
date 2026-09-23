@@ -25,6 +25,7 @@ import {
   isTokenValid,
   listEvents,
   listPolicyChecks,
+  listResumptions,
   listRuns,
 } from "./routes.mjs";
 
@@ -86,6 +87,9 @@ function routeGet(store, config, url) {
   }
   if (url.pathname === "/v1/events") {
     return { events: listEvents(store, parseIntegerParam(url, "limit", undefined)) };
+  }
+  if (url.pathname === "/v1/resumptions") {
+    return { resumptions: listResumptions(store, parseIntegerParam(url, "limit", undefined)) };
   }
   if (url.pathname === "/v1/config") {
     return { config, isPaused: existsSync(KILL_SWITCH_PATH), isEnforcing: isEnforcementEnabled(config) };

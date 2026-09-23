@@ -174,6 +174,18 @@
 </div>
 
 <div class="card">
+  <h2>Agent resumptions</h2>
+  <p class="empty" style="margin:0 0 .6rem">
+    Messages sent to an agent that was already running. A sub-agent cannot ask a human
+    directly, so it reports back and gets resumed here.
+  </p>
+  <table>
+    <thead><tr><th>when</th><th>from</th><th>to</th><th>resolved</th><th>run</th></tr></thead>
+    <tbody id="resumptionRows"></tbody>
+  </table>
+</div>
+
+<div class="card">
   <h2>Invocation log</h2>
   <table>
     <thead><tr><th>when</th><th>kind</th><th>what</th><th>session</th></tr></thead>
@@ -431,6 +443,27 @@ function renderEvents(events) {
       .join("") || `<tr><td colspan="4" class="empty">Nothing recorded yet.</td></tr>`;
 }
 
+function renderResumptions(resumptions) {
+  document.getElementById("resumptionRows").innerHTML =
+    resumptions
+      .map((resumption) => {
+        const sender =
+          resumption.sender === "agent"
+            ? `<span style="color:var(--warning)">agent</span>`
+            : "lead";
+        const target = resumption.target_label
+          ? `${resumption.target_label}`
+          : `<span class="mono">${resumption.target_ref ?? "–"}</span>`;
+        const resolved = resumption.node_id
+          ? `<span style="color:var(--good)">\u2713 ${resumption.target_kind}</span>`
+          : `<span style="color:var(--warning)">\u26a0 unresolved</span>`;
+        return `<tr><td>${clock(resumption.ts)}</td><td>${sender}</td><td>${target}</td>
+          <td>${resolved}</td><td class="mono">${(resumption.run_id ?? "").slice(0, 8)}</td></tr>`;
+      })
+      .join("") ||
+    `<tr><td colspan="5" class="empty">No agent has been resumed yet.</td></tr>`;
+}
+
 function renderWorkflows(workflows) {
   document.getElementById("workflowRows").innerHTML =
     workflows
@@ -550,12 +583,21 @@ function renderStatus(state) {
 }
 
 async function refresh() {
-  const [state, runList, checkList, eventList, workflowList, doctorReport, proposalList] =
-    await Promise.all([
+  const [
+    state,
+    runList,
+    checkList,
+    eventList,
+    resumptionList,
+    workflowList,
+    doctorReport,
+    proposalList,
+  ] = await Promise.all([
       api("/v1/config"),
       api("/v1/runs?limit=25"),
       api("/v1/policy/checks?limit=15"),
       api("/v1/events?limit=25"),
+      api("/v1/resumptions?limit=25"),
       api("/v1/workflows"),
       api("/v1/doctor"),
       api("/v1/proposals"),
@@ -566,6 +608,7 @@ async function refresh() {
   renderRuns(runList.runs);
   renderChecks(checkList.checks);
   renderEvents(eventList.events);
+  renderResumptions(resumptionList.resumptions);
   renderWorkflows(workflowList.workflows);
   renderDoctor(doctorReport.checks);
   if (!selectedRunId && runList.runs.length > 0) await selectRun(runList.runs[0].id);

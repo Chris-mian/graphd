@@ -201,6 +201,21 @@ export function listPolicyChecks(store, limit = DEFAULT_RUN_LIMIT) {
     .all(limit);
 }
 
+/**
+ * Recent messages to running agents, newest first.
+ * Joins to the target node so the UI can name who was resumed rather than print a raw ref.
+ */
+export function listResumptions(store, limit = DEFAULT_RUN_LIMIT) {
+  return store
+    .prepare(
+      `SELECT r.*, n.label AS target_label, n.agent_type AS target_agent_type
+         FROM resumptions r
+         LEFT JOIN nodes n ON n.id = r.node_id
+        ORDER BY r.ts DESC LIMIT ?`,
+    )
+    .all(limit);
+}
+
 /** Invocation feed: every event the hooks emitted, newest first. */
 export function listEvents(store, limit = DEFAULT_RUN_LIMIT) {
   return store
