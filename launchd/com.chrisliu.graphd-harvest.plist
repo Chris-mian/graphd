@@ -22,8 +22,8 @@
     <integer>45</integer>
   </dict>
   <key>StandardOutPath</key>
-  <string>/tmp/graphd-harvest.log</string>
+  <string>/Users/chrisliu/.graphd/logs/graphd-harvest.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/graphd-harvest.err</string>
+  <string>/Users/chrisliu/.graphd/logs/graphd-harvest.err</string>
 </dict>
 </plist>

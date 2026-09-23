@@ -14,8 +14,8 @@
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/tmp/graphd.log</string>
+  <string>/Users/chrisliu/.graphd/logs/graphd.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/graphd.err</string>
+  <string>/Users/chrisliu/.graphd/logs/graphd.err</string>
 </dict>
 </plist>

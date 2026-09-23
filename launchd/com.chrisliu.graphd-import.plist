@@ -22,8 +22,8 @@
     <integer>17</integer>
   </dict>
   <key>StandardOutPath</key>
-  <string>/tmp/graphd-import.log</string>
+  <string>/Users/chrisliu/.graphd/logs/graphd-import.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/graphd-import.err</string>
+  <string>/Users/chrisliu/.graphd/logs/graphd-import.err</string>
 </dict>
 </plist>
