@@ -198,6 +198,41 @@ export function recordTaskCompletion(store, { taskId, toolUseId, notifiedAt, res
   return updated.changes;
 }
 
+/**
+ * Superseded hook nodes, paired with the imported node that replaced each one.
+ * A hook has no tool_use id, so it keys a spawn by `<prompt_sha>-<random>`; the importer keys
+ * the same spawn by its real id and stores that hash in `prompt_sha`. The id prefix is the join.
+ */
+const SUPERSEDED_HOOK_NODES_SQL = `
+  SELECT DISTINCT hook.id AS hookId, imported.id AS importedId
+    FROM nodes AS hook
+    JOIN nodes AS imported
+      ON imported.id LIKE 'toolu\\_%' ESCAPE '\\'
+     AND (
+       (imported.run_id = hook.run_id
+        AND instr(hook.id, '-') > 0
+        AND imported.prompt_sha = substr(hook.id, 1, instr(hook.id, '-') - 1))
+       OR (hook.task_id IS NOT NULL AND imported.task_id = hook.task_id)
+     )
+   WHERE hook.id NOT LIKE 'toolu\\_%' ESCAPE '\\'`;
+
+/**
+ * Drops hook nodes the importer has since recorded properly, repointing anything that referenced
+ * them. Both write a row for the same spawn, so every imported spawn was counted twice; the
+ * imported row is kept because only it carries the tool_use id, the result and the accounting.
+ */
+export function pruneSupersededHookNodes(store) {
+  const superseded = store.prepare(SUPERSEDED_HOOK_NODES_SQL).all();
+  if (superseded.length === 0) return 0;
+  const repoint = store.prepare("UPDATE resumptions SET node_id = ? WHERE node_id = ?");
+  const remove = store.prepare("DELETE FROM nodes WHERE id = ?");
+  for (const { hookId, importedId } of superseded) {
+    repoint.run(importedId, hookId);
+    remove.run(hookId);
+  }
+  return superseded.length;
+}
+
 /** Stores the declared TOPOLOGY artifact and its edges, replacing any earlier declaration. */
 export function recordTopology(store, { runId, topology }) {
   store

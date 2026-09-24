@@ -79,6 +79,12 @@ Hooks get no tool_use id, so a spawn is keyed by `sha256(session + tool + prompt
 random suffix, and an end resolves to the oldest still-running node with that prompt hash in the
 run. Two identical prompts stay two nodes.
 
+Both the hook and the importer write a row for the same spawn, so the importer prunes the hook's
+once it has its own: the hook's id prefix is the hash the importer stores in `prompt_sha`, and a
+shared `task_id` catches the rest. The imported row is the one kept — only it carries the
+tool_use id, the result and the accounting. A hook row with no imported twin stays, because its
+transcript may never be imported.
+
 `Agent` results carry their own accounting — `agentId`, `resolvedModel`, `totalTokens`,
 `totalToolUseCount`, `totalDurationMs` — all captured at `node_end`.
 

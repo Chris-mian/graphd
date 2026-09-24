@@ -7,6 +7,7 @@ import {
   classifyTargetRef,
   insertResumption,
   openStore,
+  pruneSupersededHookNodes,
   recordTaskCompletion,
 } from "../src/db.mjs";
 import { parseTaskNotifications } from "../src/tasknotify.mjs";
@@ -371,11 +372,13 @@ for (const resumption of pendingResumptions) {
 resolvedResumptions = store
   .prepare("SELECT COUNT(*) AS resolvedCount FROM resumptions WHERE node_id IS NOT NULL")
   .get().resolvedCount;
+const prunedHookNodes = pruneSupersededHookNodes(store);
 store.exec("COMMIT");
 
 process.stdout.write(
   `scanned ${scannedTranscripts} transcripts (${skippedScratch} scratch skipped), ` +
     `imported ${importedNodes} agent nodes, ${importedInterventions} interventions, ` +
     `${importedResumptions} resumptions (${resolvedResumptions} resolved to a node), ` +
-    `reconciled ${reconciledCompletions} async completions\n`,
+    `reconciled ${reconciledCompletions} async completions, ` +
+    `pruned ${prunedHookNodes} superseded hook nodes\n`,
 );
