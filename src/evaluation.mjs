@@ -36,10 +36,16 @@ export const INTERVENTION_THEMES = [
       /\b(wait|waiting|dont stop|don'?t stop|keep going|too long|annoying|taking so long|go ahead|until you finished)\b/i,
   },
   {
+    id: "redirected",
+    label: "stopped and handed a different task — the agent was on the wrong work",
+    pattern:
+      /^(fix this|retry|resolve\b|reply\b)|\b(retry from|fix this|resolve merge conflicts|not mergeable|ignore the test failure|and stop)\b/i,
+  },
+  {
     id: "wrong-target",
     label: "worked on the wrong thing",
     pattern:
-      /\b(that'?s not|i asked for|not what i|instead of|you only did|i meant|revert|no[,.]? i|my bad)\b/i,
+      /\b(that'?s not|i asked for|not what i|instead of|you only did|i meant|revert|no[,.]? i|my bad|what are you doing|is this right|execution plan)\b/i,
   },
   {
     id: "wrong-technical-call",

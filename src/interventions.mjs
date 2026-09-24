@@ -31,7 +31,7 @@ const NOT_A_HUMAN_TURN_PATTERN = /<task-notification>|^Replying to this part of 
  * compacted session. Both follow an interrupt often enough to be read as its cause.
  */
 const NOT_A_REASON_PATTERN =
-  /<\/command-name>|<\/local-command-stdout>|<bash-input>|<teammate-message|romp-injected|^\/[a-z-]+\b|^Continue from where you left off|^This session is being continued|^Another Claude session sent a message/i;
+  /<\/command-name>|<\/local-command-stdout>|<bash-input>|<bash-stdout>|<bash-stderr>|<teammate-message|romp-injected|^\/[a-z-]+\b|^Continue from where you left off|^This session is being continued|^Another Claude session sent a message/i;
 
 export const INTERVENTION_KINDS = {
   INTERRUPT: "interrupt",

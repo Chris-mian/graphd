@@ -278,3 +278,24 @@ test("a machine-injected turn is not a reason", () => {
     null,
   );
 });
+
+test("a stop that hands over a different task is its own theme", () => {
+  const store = freshStore();
+  const quotes = [
+    "retry from failed tasks",
+    "https://github.com/suno-ai/glockenspiel/pull/43812 fix this",
+    "Resolve merge conflicts on three PRs. Do not merge them.",
+  ];
+  quotes.forEach((quote, index) =>
+    addIntervention(store, { id: `r${index}`, ts: `2026-09-1${index}T00:00:00Z`, quote }),
+  );
+
+  const breakdown = themeBreakdown(store);
+  assert.equal(breakdown.unmatched, 0);
+  assert.equal(breakdown.themes.find((theme) => theme.id === "redirected").count, 3);
+});
+
+test("a bash stdout block pasted after a stop is not a reason", () => {
+  assert.equal(followupReason("<bash-stdout>Attempting to open the SSO page</bash-stdout>"), null);
+  assert.equal(followupReason("<bash-stderr>warning: detached HEAD</bash-stderr>"), null);
+});
