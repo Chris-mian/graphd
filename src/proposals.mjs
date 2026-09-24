@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { STATE_DIR, ensureStateDir } from "./config.mjs";
@@ -7,6 +7,13 @@ import { acceptRule } from "./accepted.mjs";
 export const PROPOSALS_PATH = join(STATE_DIR, "proposals.json");
 export const SETTINGS_PATH =
   process.env.GRAPHD_SETTINGS_PATH ?? join(homedir(), ".claude", "settings.json");
+/** Resolved per call so a caller can point the queue somewhere else. */
+export function nightShiftTasksPath() {
+  return process.env.GRAPHD_NIGHTSHIFT_TASKS_PATH ?? join(homedir(), "nightshift", "TASKS.md");
+}
+
+const NIGHTSHIFT_STATUS = "todo";
+const NIGHTSHIFT_WORKTREE = "graphd-proposals";
 
 const STATUS_PENDING = "pending";
 const STATUS_ACCEPTED = "accepted";
@@ -170,7 +177,27 @@ function applyHook(applies) {
 function applyProposal(proposal) {
   if (proposal.applies?.type === "rule") return acceptRule(proposal.applies.rule);
   if (proposal.applies?.type === "hook") return applyHook(proposal.applies);
-  return { needsFollowUp: true, note: proposal.applies?.note ?? null };
+  return queueForNightShift(proposal);
+}
+
+/**
+ * Files an accepted proposal that needs code as a night-shift task.
+ * A manual proposal has no mechanism behind it, so before this an accept was only a note in
+ * a JSON file and the work stalled with nobody holding it.
+ */
+export function queueForNightShift(proposal) {
+  const note = proposal.applies?.note ?? null;
+  const tasksPath = nightShiftTasksPath();
+  if (!existsSync(tasksPath)) {
+    return { needsFollowUp: true, note, queued: false, reason: "no night-shift task list" };
+  }
+  const detail = [`  - From graphd proposal \`${proposal.id}\`.`];
+  if (note) detail.push(`  - ${note.replace(/\s+/g, " ")}`);
+  const entry =
+    `\n- [${NIGHTSHIFT_STATUS}] [${NIGHTSHIFT_WORKTREE}] ${proposal.title}\n` +
+    `${detail.join("\n")}\n`;
+  appendFileSync(tasksPath, entry);
+  return { needsFollowUp: true, note, queued: true, path: tasksPath };
 }
 
 /**
