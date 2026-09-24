@@ -167,6 +167,12 @@ Three quarters of interventions are a bare `[Request interrupted by user]` with 
 tool name is otherwise the whole record. Two columns recover what it was about.
 `interventions.preceding_detail` keeps the command or path that was interrupted, grouped by
 command shape with wrappers like `rtk proxy` and a leading `cd` stripped.
+A background agent's tool call returns before the work starts, so its tokens never appear in a
+tool result. They arrive later, in the `<usage>` block of its task notification, alongside the
+tool-use count and the real duration. Reading that took priced nodes from 46 of 313 to 184 of 341
+and recorded spend from 5.8M tokens to 24.6M — the earlier figure was not a floor, it was a
+sixth of the bill.
+
 `interventions.followup_quote` keeps the next human turn: stopping and saying what was wrong are
 two turns, so the reason for a stop is written on the turn after it. That recovers 35 of 39 stops
 and takes the reasoned sample from 12 to 47, past the threshold where a rule can be graded.
@@ -208,8 +214,10 @@ whatever CLI version is installed and fails the whole run with a 400 when it doe
 - Spend is a floor. Token counts arrive as one total per node with no input/output split, so
   `graph stats` prices at an assumed 90% input share and prints the all-input/all-output bounds
   beside the estimate.
-- Nodes predating the `totalTokens` field contribute zero to spend and are not excluded from the
-  totals, so the estimate is low by whatever they cost.
+- Roughly half of nodes still contribute zero to spend. A background agent's accounting arrives
+  in its task notification's `<usage>` block, which the importer now reads, but a teammate spawn
+  produces no notification in this store and a node the hook opened and nothing closed has no
+  result at all.
 - The autonomy denominator is assistant turns, not clock time. Wall-clock between a session's
   first and last message counts the days a resumed session sat idle, which put one week at 1271
   hours across 2 sessions.

@@ -166,17 +166,35 @@ export function completeNode(store, { nodeId, status, result = {} }) {
     );
 }
 
-/** Applies a task notification: the real completion time of a background agent. */
-export function recordTaskCompletion(store, { taskId, notifiedAt, resultText }) {
+/**
+ * Applies a task notification: a background agent's real completion time and its accounting.
+ * The notification's own duration is preferred over notify-minus-launch, which counts the gap
+ * before the lead thread saw the notification.
+ */
+export function recordTaskCompletion(store, { taskId, toolUseId, notifiedAt, resultText, usage }) {
   const updated = store
     .prepare(
       `UPDATE nodes
           SET notified_at = ?,
-              true_duration_ms = CAST((julianday(?) - julianday(started_at)) * ? AS INTEGER),
-              result_text = COALESCE(?, result_text)
-        WHERE task_id = ? AND notified_at IS NULL`,
+              true_duration_ms = COALESCE(
+                ?, CAST((julianday(?) - julianday(started_at)) * ? AS INTEGER)
+              ),
+              result_text = COALESCE(?, result_text),
+              total_tokens = COALESCE(?, total_tokens),
+              tool_use_count = COALESCE(?, tool_use_count)
+        WHERE (task_id = ? OR id = ?) AND (notified_at IS NULL OR total_tokens IS NULL)`,
     )
-    .run(notifiedAt, notifiedAt, MILLISECONDS_PER_DAY, resultText ?? null, taskId);
+    .run(
+      notifiedAt,
+      usage?.durationMs ?? null,
+      notifiedAt,
+      MILLISECONDS_PER_DAY,
+      resultText ?? null,
+      usage?.totalTokens ?? null,
+      usage?.toolUseCount ?? null,
+      taskId,
+      toolUseId ?? taskId,
+    );
   return updated.changes;
 }
 

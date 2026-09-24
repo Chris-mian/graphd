@@ -356,6 +356,8 @@ for (const path of transcriptPaths()) {
         taskId,
         notifiedAt: notification.notifiedAt,
         resultText: notification.resultText,
+        usage: notification.usage,
+        toolUseId: notification.toolUseId,
       });
     }
   }
