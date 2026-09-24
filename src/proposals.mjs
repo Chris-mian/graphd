@@ -146,16 +146,16 @@ export function addProposals(incoming) {
   return { addedCount: fresh.length, totalCount: existing.length + fresh.length };
 }
 
-function hookIsRegistered(settings, { event, matcher, command }) {
-  return (settings.hooks?.[event] ?? []).some(
-    (group) =>
-      group.matcher === matcher && (group.hooks ?? []).some((hook) => hook.command === command),
+function hookIsRegistered(settings, { event, command }) {
+  return (settings.hooks?.[event] ?? []).some((group) =>
+    (group.hooks ?? []).some((hook) => hook.command === command),
   );
 }
 
 /**
  * Registers the hook in settings.json, backing the file up first.
- * Idempotent: a command already present under the same matcher is left alone.
+ * Idempotent on the command, not on the matcher: the same script registered by hand under a
+ * different matcher already runs, and adding it again injects its output twice.
  */
 function applyHook(applies) {
   const { event, matcher, command, timeout } = applies;

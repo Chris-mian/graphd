@@ -64,8 +64,11 @@ Apply nothing: every proposal must stay pending for a human decision." \
 
 harvest_pid=$!
 ( sleep "$HARVEST_TIMEOUT_SECONDS"; kill "$harvest_pid" 2>/dev/null ) &
+watchdog_pid=$!
 wait "$harvest_pid"
 harvest_status=$?
+# The watchdog outlives a harvest that finished early, and the PID it holds can be reused.
+kill "$watchdog_pid" 2>/dev/null
 
 if [[ "$harvest_status" -eq 0 ]]; then
   log "harvest finished"
