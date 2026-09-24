@@ -38,10 +38,16 @@ function migrateColumns(store, table, columns) {
   }
 }
 
+/** How long a writer waits for another writer's transaction before giving up. */
+const BUSY_TIMEOUT_MILLISECONDS = 10_000;
+
 /** Opens the store and applies schema.sql. Idempotent; safe on every boot. */
 export function openStore(databasePath = DB_PATH) {
   ensureStateDir();
   const store = new DatabaseSync(databasePath);
+  // WAL lets readers run during a write but still allows one writer: the daemon writes on every
+  // hook, and the hourly import would otherwise fail outright when the two overlap.
+  store.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MILLISECONDS};`);
   store.exec(readFileSync(SCHEMA_PATH, "utf8"));
   migrateColumns(store, "nodes", NODE_RESULT_COLUMNS);
   migrateColumns(store, "sessions", SESSION_COLUMNS);
