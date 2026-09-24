@@ -150,6 +150,12 @@ function printProjectSpend(projectSpend) {
         `${project.tokens.toLocaleString()} tokens across ${project.sessionCount} session(s)\n`,
     );
   }
+  if (projectSpend.ambiguousNodes > 0) {
+    process.stdout.write(
+      `  ${"(tied)".padEnd(24)} n=${String(projectSpend.ambiguousNodes).padEnd(5)} ` +
+        `${projectSpend.ambiguousTokens.toLocaleString()} tokens — spine saw the session but no project won\n`,
+    );
+  }
   process.stdout.write(
     `  ${"(unattributed)".padEnd(24)} n=${String(projectSpend.unattributedNodes).padEnd(5)} ` +
       `${projectSpend.unattributedTokens.toLocaleString()} tokens — sessions spine did not record\n`,

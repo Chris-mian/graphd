@@ -37,9 +37,9 @@ function picksFile(rows) {
   const insert = picks.prepare(
     `INSERT INTO picks (session_id, project_slug, recorded_at, chosen_doc_ids, dropped_doc_ids,
       total_lines, reason, confidence, has_dropped_every_time, has_in_area_match)
-     VALUES (?, ?, '2026-09-24T11:00:00Z', '', '', 0, '', 1.0, 0, 0)`,
+     VALUES (?, ?, '2026-09-24T11:00:00Z', '', '', 0, '', ?, 0, 0)`,
   );
-  for (const [sessionId, slug] of rows) insert.run(sessionId, slug);
+  for (const [sessionId, slug, confidence] of rows) insert.run(sessionId, slug, confidence ?? 1.0);
   picks.close();
   return path;
 }
@@ -81,4 +81,25 @@ test("graphd does not depend on spine being installed", () => {
   const spend = spendByProject(store, "/nonexistent/picks.sqlite3");
   assert.deepEqual(spend.projects, []);
   assert.equal(spend.unattributedTokens, 1000);
+});
+
+test("a session spine could not resolve is reported as ambiguous, not split across candidates", () => {
+  const store = graphStore();
+  addRunWithNode(store, { runId: "r1", sessionId: "s1", tokens: 1000 });
+  const spend = spendByProject(
+    store,
+    picksFile([["s1", "alpha", 0.0], ["s1", "beta", 0.0], ["s1", "gamma", 0.0]]),
+  );
+  assert.deepEqual(spend.projects, []);
+  assert.equal(spend.ambiguousTokens, 1000);
+  assert.equal(spend.ambiguousNodes, 1);
+  assert.equal(spend.unattributedTokens, 0);
+});
+
+test("one resolved pick settles a session that also has tied rows", () => {
+  const store = graphStore();
+  addRunWithNode(store, { runId: "r1", sessionId: "s1", tokens: 1000 });
+  const spend = spendByProject(store, picksFile([["s1", "alpha", 0.0], ["s1", "alpha", 1.0]]));
+  assert.equal(spend.ambiguousTokens, 0);
+  assert.equal(spend.projects[0].slug, "alpha");
 });
