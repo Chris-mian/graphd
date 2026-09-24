@@ -138,6 +138,24 @@ function formatUsd(amount) {
   return `$${amount.toFixed(2)}`;
 }
 
+const PROJECT_ROWS = 8;
+
+/** Spend per project, as far as spine attributed the sessions that produced it. */
+function printProjectSpend(projectSpend) {
+  if (!projectSpend) return;
+  process.stdout.write("\nby project\n");
+  for (const project of projectSpend.projects.slice(0, PROJECT_ROWS)) {
+    process.stdout.write(
+      `  ${project.slug.padEnd(24)} n=${String(project.nodeCount).padEnd(5)} ` +
+        `${project.tokens.toLocaleString()} tokens across ${project.sessionCount} session(s)\n`,
+    );
+  }
+  process.stdout.write(
+    `  ${"(unattributed)".padEnd(24)} n=${String(projectSpend.unattributedNodes).padEnd(5)} ` +
+      `${projectSpend.unattributedTokens.toLocaleString()} tokens — sessions spine did not record\n`,
+  );
+}
+
 function printStats(stats) {
   process.stdout.write(
     `runs=${stats.runCount} agents=${stats.nodeCount} ` +
@@ -146,8 +164,10 @@ function printStats(stats) {
       `spend~${formatUsd(stats.totalCostUsd)} ` +
       `(${formatUsd(stats.totalCostLowUsd)}–${formatUsd(stats.totalCostHighUsd)}, ` +
       `combined totals split at an assumed 90% input) ` +
-      `serialized=${formatMinutes(stats.sequentialSerializedMs)}\n\nby agent type\n`,
+      `serialized=${formatMinutes(stats.sequentialSerializedMs)}\n`,
   );
+  printProjectSpend(stats.projectSpend);
+  process.stdout.write("\nby agent type\n");
   for (const bucket of stats.byAgentType) {
     process.stdout.write(
       `  ${bucket.key.padEnd(26)} n=${String(bucket.count).padStart(3)} ` +

@@ -1,3 +1,4 @@
+import { spendByProject } from "./projects.mjs";
 import { dedupeNodes, nodeDurationMs, peakConcurrency, serializationCostMs } from "./analysis.mjs";
 import { estimateCost } from "./pricing.mjs";
 
@@ -88,6 +89,7 @@ export function computeStats(store) {
   const sequential = sequentialFanouts(summaries);
 
   return {
+    projectSpend: spendByProject(store),
     runCount: summaries.length,
     nodeCount: allNodes.length,
     multiAgentRunCount: multiAgent.length,

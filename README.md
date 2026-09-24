@@ -144,6 +144,11 @@ agent spawns, results, durations, tokens, and resolved models — so analysis do
 for new traffic. It also walks each session's `subagents/` directory, which is where an agent's
 own spawns and messages are recorded. Re-running is safe; nodes are keyed by tool_use id.
 
+`graph stats` also breaks spend down by project, joining spine's `picks` table on the session id
+— graphd knows what an agent cost and spine knows what it was for, and that id is the only thing
+both write. Sessions spine did not record are reported as unattributed rather than dropped, and
+the whole section is skipped when spine is not installed.
+
 `graph stats` reports, across every run: how many multi-agent runs never had two agents running at
 once, serialized agent-time (total node duration minus the slowest node, counted only when nothing
 overlapped, so human thinking time is excluded), token spend per agent type and model, and repeated
