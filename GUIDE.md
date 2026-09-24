@@ -180,8 +180,13 @@ says how to fix it. If it's ever wrong, `graph pause`.
 ### Weekly — one command, five minutes
 
 The backfill runs itself: a launchd agent (`com.chrisliu.graphd-import`) refreshes the store every
-Monday at 08:17. It only reads local files and writes SQLite — no model tokens — so it is safe
-unattended. The harvest that *interprets* the data stays manual, because that one costs tokens.
+hour. It only reads local files and writes SQLite — no model tokens — so it is safe unattended.
+The harvest that interprets the data runs itself on Mondays at 08:45 and costs tokens, which is
+why it files proposals rather than applying them.
+
+Nothing here needs remembering: a SessionStart hook says when proposals are waiting on a decision,
+and when any of the three scheduled jobs has stopped writing to its log. `graph doctor` reports
+the same staleness under `scheduled jobs`.
 
 ```bash
 graph stats       # did shapes improve? where did spend go?

@@ -210,6 +210,11 @@ Three launch agents, all logging under `~/.graphd/logs/`:
 | `com.chrisliu.graphd-import` | hourly | backfills nodes and interventions from transcripts |
 | `com.chrisliu.graphd-harvest` | Mondays 08:45 | `bin/run-harvest.sh` — refreshes the store, runs `/lesson-harvest` headless, files proposals pending |
 
+A job that stops running is silent, which reads exactly like a job with nothing to report. Two
+things watch for that: `hooks/inject-pending-decisions.sh` at session start, and the
+`scheduled jobs` check in `graph doctor`. Both also cover `com.chrisliu.spine-refresh`, since a
+stale document index degrades what spine hands a session.
+
 `run-harvest.sh` pins its model rather than inheriting the default, which moves ahead of
 whatever CLI version is installed and fails the whole run with a 400 when it does.
 

@@ -9,6 +9,18 @@ const SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
 const ENG_TASK_PATH = join(homedir(), ".claude", "skills", "eng-task", "SKILL.md");
 const HOOK_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "hooks", "graph-emit.sh");
 const LAUNCHD_LABEL = "com.chrisliu.graphd";
+const LOGS_DIR = join(homedir(), ".graphd", "logs");
+const MILLISECONDS_PER_HOUR = 3_600_000;
+/** Each scheduled job, and how long its log may sit untouched before the schedule is suspect. */
+const SCHEDULED_JOBS = [
+  { name: "import", logPath: join(LOGS_DIR, "graphd-import.log"), maxAgeHours: 12 },
+  { name: "harvest", logPath: join(LOGS_DIR, "harvest.log"), maxAgeHours: 336 },
+  {
+    name: "spine refresh",
+    logPath: join(homedir(), ".local", "state", "spine", "refresh.log"),
+    maxAgeHours: 12,
+  },
+];
 const SECRET_FILE_MODE = 0o600;
 const MINIMUM_RUNS_BEFORE_ENFORCING = 10;
 
@@ -66,6 +78,21 @@ function checkLaunchAgent() {
   }
 }
 
+export function checkScheduledJobs(jobs = SCHEDULED_JOBS, nowMs = Date.now()) {
+  const late = [];
+  for (const job of jobs) {
+    if (!existsSync(job.logPath)) {
+      late.push(`${job.name} has never run`);
+      continue;
+    }
+    const ageHours = (nowMs - statSync(job.logPath).mtimeMs) / MILLISECONDS_PER_HOUR;
+    if (ageHours > job.maxAgeHours) late.push(`${job.name} ${Math.round(ageHours)}h stale`);
+  }
+  return late.length === 0
+    ? check("scheduled jobs", PASS, `${jobs.length} jobs current`)
+    : check("scheduled jobs", WARN, late.join(", "));
+}
+
 function checkEngTaskWiring() {
   if (!existsSync(ENG_TASK_PATH)) return check("eng-task wiring", WARN, "eng-task skill not found");
   const hasTopologyPost = readFileSync(ENG_TASK_PATH, "utf8").includes("/v1/topology");
@@ -120,6 +147,7 @@ export function runDiagnostics(store) {
     checkHookDependencies(),
     checkTokenPermissions(),
     checkLaunchAgent(),
+    checkScheduledJobs(),
     checkEngTaskWiring(),
     checkAsyncReconciliation(store),
     checkEnforcementReadiness(store),
