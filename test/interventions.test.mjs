@@ -12,7 +12,30 @@ const SELF_CORRECTION = INTERVENTION_KINDS.SELF_CORRECTION;
 test("a correction opening a turn is a self-correction", () => {
   assert.equal(classifyAssistantText("Correction: no rewrite happened."), SELF_CORRECTION);
   assert.equal(classifyAssistantText("Important correction — #40040 is still open."), SELF_CORRECTION);
-  assert.equal(classifyAssistantText("Tracker correction — inline on the stale claim."), SELF_CORRECTION);
+  assert.equal(classifyAssistantText("I also owe you a correction: the gate was never on."), SELF_CORRECTION);
+});
+
+test("an edit described as a correction is not a retraction", () => {
+  assert.equal(classifyAssistantText("Tracker correction — inline on the stale claim."), null);
+});
+
+test("a retraction stated as a condition is not one yet", () => {
+  const conditional =
+    "If it is still red after the rerun, I was wrong about the cause and the pool is fine.";
+  assert.equal(classifyAssistantText(conditional), null);
+});
+
+test("a rollback named as a measurement is not a human correction", () => {
+  assert.equal(classifyHumanTurn("Rollback duration = f(pod count), so chart it that way."), null);
+  assert.equal(classifyHumanTurn("if no, why does the job still enqueue?"), null);
+});
+
+test("an imperative rollback is still a correction", () => {
+  assert.equal(classifyHumanTurn("revert that commit"), INTERVENTION_KINDS.CORRECTION);
+  assert.equal(
+    classifyHumanTurn("That landed badly. Now roll back the deploy."),
+    INTERVENTION_KINDS.CORRECTION,
+  );
 });
 
 test("a correction mentioned deep in a report is not one", () => {

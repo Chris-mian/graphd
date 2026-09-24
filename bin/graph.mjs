@@ -339,9 +339,18 @@ try {
     case "eval":
       printEvaluation((await callDaemon("/v1/evaluation")).evaluation);
       break;
-    case "accept":
-      process.stdout.write(`${JSON.stringify(await postDaemon("/v1/lessons/accept", { rule: process.argv.slice(3).join(" ") }))}\n`);
+    case "accept": {
+      // A flag is never a rule: `graph accept --help` used to file "--help" as a lesson and
+      // inject it into every agent prompt.
+      const rule = process.argv.slice(3).join(" ").trim();
+      if (!rule || rule.startsWith("-")) {
+        process.stderr.write("usage: graph accept <rule text>\n");
+        process.exitCode = 1;
+        break;
+      }
+      process.stdout.write(`${JSON.stringify(await postDaemon("/v1/lessons/accept", { rule }))}\n`);
       break;
+    }
     case "rules":
       for (const rule of (await callDaemon("/v1/lessons/accepted")).rules) {
         process.stdout.write(`- ${rule}\n`);

@@ -41,10 +41,12 @@ export const INTERVENTION_KINDS = {
 
 /** Phrases that only appear when a human is redirecting work already in progress. */
 const CORRECTION_PATTERNS = [
-  /\bno[,.!]\s/i,
+  /(?<!\bif\s)\bno[,.!]\s/i,
   /\b(that'?s|this is) (wrong|not right|incorrect|not what)\b/i,
   /\byou (broke|missed|forgot|ignored|misread|didn'?t)\b/i,
-  /\b(stop|wait|hold on|revert|undo|roll ?back)\b/i,
+  /\b(stop|wait|hold on)\b/i,
+  /^(?:please\s+|now\s+)?(?:revert|undo|roll ?back)\b(?=\s+(?:the|it|this|that|these|those|my|your|all|everything|to)\b|[.!?]|$)/i,
+  /[.!?]\s+(?:please\s+|now\s+)?(?:revert|undo|roll ?back)\b(?=\s+(?:the|it|this|that|these|those|my|your|all|everything|to)\b|[.!?]|$)/i,
   /\b(don'?t|do not) (do|use|add|change|touch)\b/i,
   /\bwhy did you\b/i,
   /\bi (said|asked for|told you)\b/i,
@@ -68,7 +70,16 @@ const SELF_CORRECTION_PATTERNS = [
  * "correction" is the agent narrating someone else's, not making one. The trailing punctuation
  * excludes a word-internal hyphen so "correction-based" does not read as a marker.
  */
-const OPENING_SELF_CORRECTION_PATTERNS = [/\bcorrection\b\s*(?::|—|-(?=\s))/i];
+const OPENING_SELF_CORRECTION_PATTERNS = [
+  /^(?:#{1,4}\s*)?(?:(?:critical|important|major|minor|small|quick|one)\s+)?(?:correction|correcting myself)\s*(?::|—)/i,
+  /\bi (?:also )?owe you a correction\b/i,
+];
+
+/**
+ * A retraction stated as a condition is about a turn that has not happened yet. "If it is still
+ * red, I was wrong about the cause" is a plan, not a correction.
+ */
+const CONDITIONAL_CLAUSE_PATTERN = /^\s*(?:if|unless|should)\b/i;
 
 /** Flattens a turn's content, which the transcript writes either as a string or a block array. */
 export function contentText(rawContent) {
@@ -134,9 +145,20 @@ export function followupReason(rawContent) {
 export function classifyAssistantText(text) {
   if (typeof text !== "string" || text.length === 0) return null;
   const isSelfCorrection =
-    matchesAny(SELF_CORRECTION_PATTERNS, text) ||
+    checkHasUnconditionalMarker(text) ||
     matchesAny(OPENING_SELF_CORRECTION_PATTERNS, text.slice(0, OPENING_WINDOW));
   return isSelfCorrection ? INTERVENTION_KINDS.SELF_CORRECTION : null;
+}
+
+/** Whether a retraction marker appears in a sentence that is stating it, not supposing it. */
+function checkHasUnconditionalMarker(text) {
+  return String(text)
+    .split(SENTENCE_SPLIT_PATTERN)
+    .some(
+      (sentence) =>
+        matchesAny(SELF_CORRECTION_PATTERNS, sentence) &&
+        !CONDITIONAL_CLAUSE_PATTERN.test(sentence),
+    );
 }
 
 /** Returns the sentence that triggered the match, so a report quotes the retraction itself. */
