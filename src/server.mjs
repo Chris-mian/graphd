@@ -76,7 +76,7 @@ function parseIntegerParam(url, name, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function routeGet(store, config, url) {
+export function routeGet(store, config, url) {
   if (url.pathname === "/v1/health") {
     return { ok: true, isEnforcing: isEnforcementEnabled(config) };
   }

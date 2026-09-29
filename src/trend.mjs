@@ -19,7 +19,8 @@ function emptyWeek(week) {
 
 /**
  * Parallelism, waste and spend per week, over the same `%Y-W%W` weeks `graph lessons` uses, with
- * that series' human interventions per session alongside. A run falls in the week it started.
+ * that series' human interventions per session alongside. A run falls in the week it started; a
+ * week with sessions but no runs is listed with zero runs.
  */
 export function computeTrend(store) {
   const weekOf = store.prepare("SELECT strftime('%Y-W%W', ?) AS week");
@@ -40,6 +41,8 @@ export function computeTrend(store) {
     weeks.set(week, bucket);
   }
   const autonomyByWeek = new Map(autonomyTrend(store).map((row) => [row.week, row]));
+  // A week with sessions but no agent spawned still has an intervention rate worth showing.
+  for (const week of autonomyByWeek.keys()) if (!weeks.has(week)) weeks.set(week, emptyWeek(week));
   return [...weeks.values()]
     .sort((left, right) => left.week.localeCompare(right.week))
     .map(({ agentMs, busyMs, ...bucket }) => ({
