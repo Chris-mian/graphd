@@ -77,6 +77,10 @@ export function upsertRun(store, { runId, sessionId, cwd, source = "session" }) 
   return runId;
 }
 
+/**
+ * Records a live spawn. The hook sends a missing agent type, label, name or model as "" while the
+ * backfill stores null; both become null so a hook row and its transcript twin still match.
+ */
 export function insertNode(store, node) {
   store
     .prepare(
@@ -91,10 +95,10 @@ export function insertNode(store, node) {
       node.runId,
       node.parentNodeId ?? null,
       node.tool,
-      node.agentType ?? null,
-      node.label ?? null,
-      node.name ?? null,
-      node.model ?? null,
+      node.agentType || null,
+      node.label || null,
+      node.name || null,
+      node.model || null,
       node.promptSha ?? null,
       node.startedAt ?? nowIso(),
       node.promptText ?? null,

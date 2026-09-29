@@ -109,3 +109,20 @@ test("completeNode records true_duration_ms for a synchronous agent", () => {
   assert.equal(row.duration_ms, 5000);
   assert.equal(row.true_duration_ms, 5000);
 });
+
+test("a hook row with an empty label still collapses into its transcript twin", () => {
+  const store = new DatabaseSync(":memory:");
+  store.exec(readFileSync(join(import.meta.dirname, "..", "schema.sql"), "utf8"));
+  upsertRun(store, { runId: RUN_ID, sessionId: RUN_ID });
+  const startedAt = "2026-09-25T10:00:00.000Z";
+  insertNode(store, { id: "0123456789abcdef-x", runId: RUN_ID, tool: "Workflow", agentType: "", label: "", startedAt });
+  store
+    .prepare(
+      `INSERT INTO nodes (id, run_id, tool, label, started_at, status)
+       VALUES ('toolu_twin', ?, 'Workflow', NULL, ?, 'ok')`,
+    )
+    .run(RUN_ID, startedAt);
+  const rows = store.prepare("SELECT * FROM nodes").all();
+  assert.equal(rows.find((row) => row.id === "0123456789abcdef-x").label, null);
+  assert.equal(dedupeNodes(rows).length, 1);
+});
