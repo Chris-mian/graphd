@@ -11,8 +11,6 @@ export const PICKS_DB_PATH =
 const UNKNOWN_SESSION_ID = "unknown";
 const AMBIGUOUS_CONFIDENCE = 0;
 
-const SPINE_START_SQL = "SELECT MIN(recorded_at) AS firstRecordedAt FROM picks";
-
 const PICKS_SQL = `
   SELECT session_id AS sessionId,
          project_slug AS projectSlug,
@@ -65,32 +63,19 @@ export function readSessionProjects(picksPath = PICKS_DB_PATH) {
   });
 }
 
-/** When spine recorded its first pick; sessions before then could never have been attributed. */
-export function readSpineStart(picksPath = PICKS_DB_PATH) {
-  return readPicks(picksPath, null, (picks) => picks.prepare(SPINE_START_SQL).get()?.firstRecordedAt ?? null);
-}
-
-/** Tokens and deduplicated node counts per session, with when the session's first run began. */
+/** Tokens and deduplicated node counts per session. */
 function spendBySession(store) {
   const nodes = store
     .prepare(
-      `SELECT nodes.*, runs.session_id AS session_id, runs.started_at AS run_started_at
+      `SELECT nodes.*, runs.session_id AS session_id
          FROM nodes JOIN runs ON runs.id = nodes.run_id`,
     )
     .all();
   const bySession = new Map();
   for (const node of dedupeNodes(nodes)) {
-    const session = bySession.get(node.session_id) ?? {
-      sessionId: node.session_id,
-      firstStartedAt: node.run_started_at,
-      nodeCount: 0,
-      tokens: 0,
-    };
+    const session = bySession.get(node.session_id) ?? { sessionId: node.session_id, nodeCount: 0, tokens: 0 };
     session.nodeCount += 1;
     session.tokens += node.total_tokens ?? 0;
-    if (Date.parse(node.run_started_at) < Date.parse(session.firstStartedAt)) {
-      session.firstStartedAt = node.run_started_at;
-    }
     bySession.set(node.session_id, session);
   }
   return [...bySession.values()];
@@ -100,18 +85,15 @@ function spendBySession(store) {
  * Spend and node counts per project, plus what could not be placed.
  * A session lands on every project spine resolved it to — counted toward each rather than
  * dropped — and never on a zero-confidence candidate. A session with no resolved project is
- * tied; one spine never recorded is unattributed, split by whether it predates spine.
+ * tied; one spine never recorded is unattributed.
  */
 export function spendByProject(store, picksPath = PICKS_DB_PATH) {
   const bySession = readSessionProjects(picksPath);
-  const spineStartedAt = readSpineStart(picksPath);
 
   const totals = new Map();
   const ambiguousCandidateCounts = new Map();
   let unattributedNodes = 0;
   let unattributedTokens = 0;
-  let beforeSpineNodes = 0;
-  let beforeSpineTokens = 0;
   let ambiguousNodes = 0;
   let ambiguousTokens = 0;
   for (const session of spendBySession(store)) {
@@ -119,10 +101,6 @@ export function spendByProject(store, picksPath = PICKS_DB_PATH) {
     if (!attachment || attachment.slugs.length === 0) {
       unattributedNodes += session.nodeCount;
       unattributedTokens += session.tokens;
-      if (spineStartedAt === null || Date.parse(session.firstStartedAt) < Date.parse(spineStartedAt)) {
-        beforeSpineNodes += session.nodeCount;
-        beforeSpineTokens += session.tokens;
-      }
       continue;
     }
     if (!attachment.isResolved) {
@@ -150,9 +128,6 @@ export function spendByProject(store, picksPath = PICKS_DB_PATH) {
       .map(([slug]) => slug),
     unattributedNodes,
     unattributedTokens,
-    beforeSpineNodes,
-    beforeSpineTokens,
-    spineStartedAt,
     attributedSessions: bySession.size,
   };
 }

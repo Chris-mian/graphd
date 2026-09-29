@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import { CONFIG_PATH, KILL_SWITCH_PATH, loadConfig, readOrCreateToken } from "../src/config.mjs";
+import { describeRunLookupFailure } from "../src/routes.mjs";
 
 const DEFAULT_LIMIT = 20;
 const MILLISECONDS_PER_SECOND = 1000;
@@ -162,19 +163,11 @@ function printProjectSpend(projectSpend) {
     projectSpend.ambiguousTokens,
     `spine could not choose between ${projectSpend.ambiguousCandidates?.join(", ") || "its candidates"}`,
   );
-  const beforeSpineNodes = projectSpend.beforeSpineNodes ?? 0;
-  const beforeSpineTokens = projectSpend.beforeSpineTokens ?? 0;
   writeBucket(
-    "(before spine)",
-    beforeSpineNodes,
-    beforeSpineTokens,
-    `sessions older than spine's first pick (${projectSpend.spineStartedAt?.slice(0, 10) ?? "spine not installed"})`,
-  );
-  writeBucket(
-    "(no project)",
-    projectSpend.unattributedNodes - beforeSpineNodes,
-    projectSpend.unattributedTokens - beforeSpineTokens,
-    "spine ran but no registered project matched the session",
+    "(unattributed)",
+    projectSpend.unattributedNodes,
+    projectSpend.unattributedTokens,
+    "spine has no pick for the session: no registered project matched its folder, or spine never saw it",
   );
 }
 
@@ -325,13 +318,8 @@ async function showRun(runIdOrPrefix) {
   try {
     detail = await callDaemon(`/v1/runs/${encodeURIComponent(runIdOrPrefix)}`);
   } catch (error) {
-    const [status, ...body] = String(error.message).split(" ");
-    if (status === "404") throw new Error(`no run matches ${runIdOrPrefix}`);
-    if (status === "409") {
-      const { matches } = JSON.parse(body.join(" "));
-      throw new Error(`${runIdOrPrefix} matches ${matches.length} runs: ${matches.join(", ")}`);
-    }
-    throw error;
+    const description = describeRunLookupFailure(error.message, runIdOrPrefix);
+    throw description ? new Error(description) : error;
   }
   printRunDetail(detail);
 }

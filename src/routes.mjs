@@ -187,6 +187,17 @@ function resolveRun(store, runIdOrPrefix) {
   return matches.length > 1 ? { ambiguous: matches.map((match) => match.id) } : null;
 }
 
+/** The words `graph show` prints for a failed lookup, from the daemon's "<status> <body>" error. */
+export function describeRunLookupFailure(errorMessage, runIdOrPrefix) {
+  const [status, ...body] = String(errorMessage).split(" ");
+  if (status === "404") return `no run matches ${runIdOrPrefix}`;
+  if (status === "409") {
+    const { matches } = JSON.parse(body.join(" "));
+    return `${runIdOrPrefix} matches ${matches.length} runs: ${matches.join(", ")}`;
+  }
+  return null;
+}
+
 export function getRun(store, runIdOrPrefix) {
   const resolved = resolveRun(store, runIdOrPrefix);
   if (!resolved) return null;

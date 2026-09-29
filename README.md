@@ -147,11 +147,12 @@ own spawns and messages are recorded. Re-running is safe; nodes are keyed by too
 `graph stats` also breaks spend down by project, joining spine's `picks` table on the session id
 — graphd knows what an agent cost and spine knows what it was for, and that id is the only thing
 both write. A session counts toward every project spine resolved it to (confidence above zero),
-never toward a zero-confidence candidate, so project rows plus the buckets below sum to the total.
-A session with no resolved project is `(tied)` and names its candidates; one spine never recorded is
-`(before spine)` when it predates spine's first pick and `(no project)` otherwise — spine records
-nothing for a working directory with no registered project. Nodes are deduplicated first, as in
-the rest of `graph stats`.
+never toward a zero-confidence candidate. Project rows plus the buckets below sum to the total
+unless a session resolved to more than one project, which then counts in full toward each. A
+session with no resolved project is `(tied)` and names its candidates; one with no pick at all is
+`(unattributed)` — spine records nothing for a folder with no registered project, and spine
+backfills older sessions, so age alone does not explain a missing pick. Nodes are deduplicated
+first, as in the rest of `graph stats`.
 
 `graph stats` reports, across every run: how many multi-agent runs never had two agents running at
 once, serialized agent-time (total node duration minus the slowest node, counted only when nothing

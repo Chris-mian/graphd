@@ -147,21 +147,20 @@ function serveUi(response) {
   response.end(html);
 }
 
+/** HTTP status for a route's result: 404 when absent, 409 for an ambiguous run id, else 200. */
+export function statusForResult(result) {
+  if (result === null || result === undefined) return HTTP_NOT_FOUND;
+  return result.error === AMBIGUOUS_RUN_ID ? HTTP_CONFLICT : HTTP_OK;
+}
+
 async function dispatch(store, url, request, response) {
   const config = loadConfig();
   const result =
     request.method === "GET"
       ? routeGet(store, config, url)
       : await routePost(store, config, url, request);
-  if (result === null || result === undefined) {
-    sendJson(response, HTTP_NOT_FOUND, { error: "not found" });
-    return;
-  }
-  if (result.error === AMBIGUOUS_RUN_ID) {
-    sendJson(response, HTTP_CONFLICT, result);
-    return;
-  }
-  sendJson(response, HTTP_OK, result);
+  const status = statusForResult(result);
+  sendJson(response, status, status === HTTP_NOT_FOUND ? { error: "not found" } : result);
 }
 
 /** Starts the daemon. Config is re-read per request so edits take effect without a restart. */

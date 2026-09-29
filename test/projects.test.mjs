@@ -121,16 +121,6 @@ test("a tied session names the projects spine could not choose between", () => {
   assert.deepEqual(spend.ambiguousCandidates, ["alpha", "beta"]);
 });
 
-test("unattributed sessions older than spine's first pick are counted apart", () => {
-  const store = graphStore();
-  addRunWithNode(store, { runId: "r1", sessionId: "old", tokens: 700, startedAt: "2026-08-01T00:00:00Z" });
-  addRunWithNode(store, { runId: "r2", sessionId: "new", tokens: 300, startedAt: "2026-09-25T00:00:00Z" });
-  const spend = spendByProject(store, picksFile([["s9", "alpha"]]));
-  assert.equal(spend.unattributedTokens, 1000);
-  assert.equal(spend.beforeSpineTokens, 700);
-  assert.equal(spend.beforeSpineNodes, 1);
-});
-
 test("a spawn recorded by both the hook and the backfill counts once", () => {
   const store = graphStore();
   addRunWithNode(store, { runId: "r1", sessionId: "s1", tokens: 1000 });
