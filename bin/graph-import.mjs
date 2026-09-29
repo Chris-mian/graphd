@@ -295,12 +295,17 @@ function insertWorkflowChildren(store, { spawn, transcriptDir, workflowRunId }) 
   const children = readWorkflowChildren(transcriptDir);
   if (children.length === 0) return 0;
   const runKey = workflowRunId ?? spawn.toolUseId;
+  // A forked session repeats its parent's history, so the same Workflow can appear under two
+  // sessions. Children go wherever the parent row already lives.
+  const runId = store.prepare("SELECT run_id FROM nodes WHERE id = ?").get(spawn.toolUseId)?.run_id ?? spawn.sessionId;
   const upsert = store.prepare(
     `INSERT INTO nodes
        (id, run_id, parent_node_id, tool, agent_type, label, model, started_at, ended_at, status,
         duration_ms, true_duration_ms, agent_id, is_async)
      VALUES (?, ?, ?, 'Agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
      ON CONFLICT (id) DO UPDATE SET
+       run_id           = excluded.run_id,
+       parent_node_id   = excluded.parent_node_id,
        agent_type       = excluded.agent_type,
        label            = excluded.label,
        model            = excluded.model,
@@ -312,7 +317,7 @@ function insertWorkflowChildren(store, { spawn, transcriptDir, workflowRunId }) 
   for (const child of children) {
     upsert.run(
       `wf:${runKey}:${child.agentId}`,
-      spawn.sessionId,
+      runId,
       spawn.toolUseId,
       child.agentType,
       child.label,
@@ -329,6 +334,12 @@ function insertWorkflowChildren(store, { spawn, transcriptDir, workflowRunId }) 
     .prepare("UPDATE nodes SET true_duration_ms = ? WHERE id = ?")
     .run(unionMs(children.flatMap((child) => child.segments)), spawn.toolUseId);
   return children.length;
+}
+
+function hasRunningChild(store, parentNodeId) {
+  return Boolean(
+    store.prepare("SELECT 1 FROM nodes WHERE parent_node_id = ? AND status = 'running' LIMIT 1").get(parentNodeId),
+  );
 }
 
 function upsertSession(store, session) {
@@ -404,12 +415,20 @@ for (const path of transcriptPaths()) {
   }
   for (const spawn of spawns) {
     if (!spawn.sessionId || !spawn.startedAt) continue;
-    if (Date.parse(spawn.startedAt) < cutoffMs) continue;
     const completion = resultsByToolUseId.get(spawn.toolUseId);
+    const transcriptDir = completion?.result?.transcriptDir;
+    const isWorkflow = spawn.tool === "Workflow" && Boolean(transcriptDir);
+    if (Date.parse(spawn.startedAt) < cutoffMs) {
+      // An older Workflow is read again only while one of its agents is still open.
+      if (isWorkflow && !workflowParents.has(spawn.toolUseId) && hasRunningChild(store, spawn.toolUseId)) {
+        workflowParents.set(spawn.toolUseId, { spawn, transcriptDir, workflowRunId: completion.result.runId ?? null });
+      }
+      continue;
+    }
     insertSpawn(store, spawn, completion);
     importedNodes += 1;
-    const transcriptDir = completion?.result?.transcriptDir;
-    if (spawn.tool === "Workflow" && transcriptDir) {
+    // First sighting wins, matching insertSpawn, which never moves a node to another run.
+    if (isWorkflow && !workflowParents.has(spawn.toolUseId)) {
       workflowParents.set(spawn.toolUseId, {
         spawn,
         transcriptDir,

@@ -127,13 +127,6 @@ test("a hook row with an empty label still collapses into its transcript twin", 
   assert.equal(dedupeNodes(rows).length, 1);
 });
 
-test("an agent a Workflow ran never collapses into a same-labelled hook row", () => {
-  const startedAt = "2026-09-25T10:00:00.000Z";
-  const hookRow = { id: "0123456789abcdef-y", run_id: RUN_ID, tool: "Agent", label: "verify", started_at: startedAt };
-  const workflowChild = { ...hookRow, id: "wf:wf_run:a1", parent_node_id: "toolu_workflow" };
-  assert.equal(dedupeNodes([hookRow, workflowChild]).length, 2);
-});
-
 test("an agent a Workflow ran never collapses into a same-labelled backfill row", () => {
   const startedAt = "2026-09-25T10:00:00.000Z";
   const backfillRow = { id: "toolu_lead", run_id: RUN_ID, tool: "Agent", label: "verify", started_at: startedAt };

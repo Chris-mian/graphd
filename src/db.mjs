@@ -186,9 +186,13 @@ export function recordTaskCompletion(store, { taskId, toolUseId, notifiedAt, res
     .prepare(
       `UPDATE nodes
           SET notified_at = ?,
-              true_duration_ms = COALESCE(
-                ?, CAST((julianday(?) - julianday(started_at)) * ? AS INTEGER)
-              ),
+              -- A Workflow whose agents are on file keeps their active time: the runtime's figure
+              -- counts time the session sat suspended.
+              true_duration_ms = CASE
+                WHEN EXISTS (SELECT 1 FROM nodes AS child WHERE child.parent_node_id = nodes.id)
+                  THEN true_duration_ms
+                ELSE COALESCE(?, CAST((julianday(?) - julianday(started_at)) * ? AS INTEGER))
+              END,
               result_text = COALESCE(?, result_text),
               total_tokens = COALESCE(?, total_tokens),
               tool_use_count = COALESCE(?, tool_use_count)

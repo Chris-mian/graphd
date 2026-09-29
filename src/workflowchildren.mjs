@@ -25,18 +25,49 @@ function readJsonLines(path) {
 }
 
 /**
- * Spans of continuous work in a transcript: timestamps sorted, split wherever two entries are more
- * than `maxGapMs` apart. A session suspended mid-agent becomes two spans, not one long one.
+ * A gap with a tool call in flight is the agent waiting on its own tool, which is work. Past this
+ * long it is a session suspended mid-call instead; the longest shell call the runtime allows is 10
+ * minutes.
  */
-export function activeSegments(timestampsMs, maxGapMs = MAX_ACTIVE_GAP_MS) {
-  const sorted = timestampsMs.filter(Number.isFinite).sort((left, right) => left - right);
+export const MAX_TOOL_CALL_MS = 30 * 60_000;
+
+/**
+ * Spans of continuous work in a transcript: entries sorted by time, split wherever two are more than
+ * `maxGapMs` apart, unless the earlier one left a tool call in flight for under MAX_TOOL_CALL_MS.
+ * A session suspended mid-agent becomes two spans, not one long one. Each point is a timestamp in
+ * ms, or `{ at, toolInFlight }`.
+ */
+export function activeSegments(points, maxGapMs = MAX_ACTIVE_GAP_MS) {
+  const sorted = points
+    .map((point) => (typeof point === "number" ? { at: point, toolInFlight: false } : point))
+    .filter((point) => Number.isFinite(point.at))
+    .sort((left, right) => left.at - right.at);
   const segments = [];
-  for (const at of sorted) {
+  let previous = null;
+  for (const point of sorted) {
     const current = segments[segments.length - 1];
-    if (current && at - current[1] <= maxGapMs) current[1] = at;
-    else segments.push([at, at]);
+    const gapMs = previous ? point.at - previous.at : Infinity;
+    const isBusy = gapMs <= maxGapMs || (previous?.toolInFlight && gapMs <= MAX_TOOL_CALL_MS);
+    if (current && isBusy) current[1] = point.at;
+    else segments.push([point.at, point.at]);
+    previous = point;
   }
   return segments;
+}
+
+/** Each entry's time, and whether a tool call it or an earlier entry started is still unanswered. */
+function activityPoints(entries) {
+  const openToolUseIds = new Set();
+  const points = [];
+  for (const entry of entries) {
+    const blocks = Array.isArray(entry.message?.content) ? entry.message.content : [];
+    for (const block of blocks) {
+      if (block?.type === "tool_use" && block.id) openToolUseIds.add(block.id);
+      if (block?.type === "tool_result" && block.tool_use_id) openToolUseIds.delete(block.tool_use_id);
+    }
+    points.push({ at: Date.parse(entry.timestamp), toolInFlight: openToolUseIds.size > 0 });
+  }
+  return points.filter((point) => Number.isFinite(point.at));
 }
 
 /**
@@ -61,11 +92,9 @@ export function readWorkflowChildren(transcriptDir) {
     } catch {
       // An unreadable meta file still leaves the transcript's timing.
     }
-    const timestamps = readJsonLines(join(transcriptDir, `agent-${agentId}.jsonl`))
-      .map((entry) => Date.parse(entry.timestamp))
-      .filter(Number.isFinite);
-    if (timestamps.length === 0) continue;
-    const segments = activeSegments(timestamps);
+    const points = activityPoints(readJsonLines(join(transcriptDir, `agent-${agentId}.jsonl`)));
+    if (points.length === 0) continue;
+    const segments = activeSegments(points);
     children.push({
       agentId,
       agentType: meta.agentType || null,
