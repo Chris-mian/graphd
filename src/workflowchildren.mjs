@@ -1,5 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { unionMs } from "./analysis.mjs";
+
+export { unionMs };
 
 /** A pause longer than this between two transcript entries is idle time, not work. */
 export const MAX_ACTIVE_GAP_MS = 5 * 60_000;
@@ -34,22 +37,6 @@ export function activeSegments(timestampsMs, maxGapMs = MAX_ACTIVE_GAP_MS) {
     else segments.push([at, at]);
   }
   return segments;
-}
-
-/** Total milliseconds covered by a set of possibly overlapping [start, end] spans. */
-export function unionMs(segments) {
-  const sorted = [...segments].sort((left, right) => left[0] - right[0]);
-  let total = 0;
-  let open = null;
-  for (const [start, end] of sorted) {
-    if (open && start <= open[1]) {
-      open[1] = Math.max(open[1], end);
-      continue;
-    }
-    if (open) total += open[1] - open[0];
-    open = [start, end];
-  }
-  return open ? total + (open[1] - open[0]) : total;
 }
 
 /**

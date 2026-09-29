@@ -18,8 +18,11 @@ import {
   delegationBatches,
   observedEdges,
   parallelismReport,
+  shapeNodes,
+  spendNodes,
   topologyDiff,
 } from "./analysis.mjs";
+import { estimateCost } from "./pricing.mjs";
 
 const DEFAULT_RUN_LIMIT = 50;
 const PROMPT_SHA_ALGORITHM = "sha256";
@@ -151,12 +154,13 @@ export function listRuns(store, limit = DEFAULT_RUN_LIMIT) {
     .all(limit);
   return runs.map((run) => {
     const nodes = selectNodes(store, run.id);
+    const ranNodes = shapeNodes(nodes);
     return {
       ...run,
-      node_count: nodes.length,
-      totalTokens: nodes.reduce((sum, node) => sum + (node.total_tokens ?? 0), 0),
-      parallelism: parallelismReport(nodes),
-      ...topologyDiff({ declaredShape: run.declared_shape, nodes }),
+      node_count: ranNodes.length,
+      totalTokens: spendNodes(nodes).reduce((sum, node) => sum + (node.total_tokens ?? 0), 0),
+      parallelism: parallelismReport(ranNodes),
+      ...topologyDiff({ declaredShape: run.declared_shape, nodes: ranNodes }),
     };
   });
 }
@@ -214,13 +218,19 @@ export function getRun(store, runIdOrPrefix) {
   const interventions = store
     .prepare("SELECT * FROM interventions WHERE run_id = ? ORDER BY ts")
     .all(runId);
+  // Timing views read the agents that ran, with a Workflow replaced by its children; the node
+  // list keeps both so the timeline can nest children under their Workflow.
+  const ranNodes = shapeNodes(nodes);
   return {
     run,
-    nodes,
-    edges: [...declaredEdges, ...observedEdges(nodes)],
-    diff: topologyDiff({ declaredShape: run.declared_shape, nodes }),
-    batches: delegationBatches(nodes),
-    parallelism: parallelismReport(nodes),
+    nodes: nodes.map((node) => ({
+      ...node,
+      costUsd: estimateCost({ totalTokens: node.total_tokens, model: node.resolved_model ?? node.model }).estimate,
+    })),
+    edges: [...declaredEdges, ...observedEdges(ranNodes)],
+    diff: topologyDiff({ declaredShape: run.declared_shape, nodes: ranNodes }),
+    batches: delegationBatches(ranNodes),
+    parallelism: parallelismReport(ranNodes),
     topology: run.topology_json ? JSON.parse(run.topology_json) : null,
     checks,
     interventions,

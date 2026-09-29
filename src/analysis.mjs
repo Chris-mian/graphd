@@ -52,6 +52,51 @@ export function nodeDurationMs(node) {
   return node.duration_ms ?? MILLISECONDS_UNKNOWN;
 }
 
+/** Total milliseconds covered by a set of possibly overlapping [start, end] spans. */
+export function unionMs(segments) {
+  const sorted = [...segments].sort((left, right) => left[0] - right[0]);
+  let total = 0;
+  let open = null;
+  for (const [start, end] of sorted) {
+    if (open && start <= open[1]) {
+      open[1] = Math.max(open[1], end);
+      continue;
+    }
+    if (open) total += open[1] - open[0];
+    open = [start, end];
+  }
+  return open ? total + (open[1] - open[0]) : total;
+}
+
+/** Nodes as they ran: a Workflow with recorded children is replaced by its children. */
+export function shapeNodes(nodes) {
+  const parentIds = new Set(nodes.map((node) => node.parent_node_id).filter(Boolean));
+  return nodes.filter((node) => !parentIds.has(node.id));
+}
+
+/** Nodes that carry spend: a Workflow's children are dropped, since the Workflow holds the tokens. */
+export function spendNodes(nodes) {
+  return nodes.filter((node) => !node.parent_node_id);
+}
+
+/**
+ * Wall time agents were running and the time at least one was: their ratio is how many ran at
+ * once, on average, while any did. Time with no agent running (the lead thinking, a human) is
+ * excluded, so a long session with one burst of fan-out still reads as parallel.
+ */
+export function concurrencyTotals(nodes, nowMs = Date.now()) {
+  const spans = measurableNodes(nodes).map((node) => [Date.parse(node.started_at), nodeEndMs(node, nowMs)]);
+  const agentMs = spans.reduce((sum, [start, end]) => sum + Math.max(end - start, 0), 0);
+  const busyMs = unionMs(spans);
+  return { agentMs, busyMs };
+}
+
+/** Average number of agents running at once while any was; null when nothing ran measurably. */
+export function averageConcurrency(nodes, nowMs = Date.now()) {
+  const { agentMs, busyMs } = concurrencyTotals(nodes, nowMs);
+  return busyMs > 0 ? agentMs / busyMs : null;
+}
+
 /**
  * Peak number of nodes running at the same instant.
  * A node with no end is still running and is held open to now; starts win ties so two nodes
@@ -252,6 +297,7 @@ export function parallelismReport(nodes, nowMs = Date.now()) {
     measuredCount: measuredBatches.length,
     achievedCount: achievedBatches.length,
     largestBatch: batches.reduce((widest, batch) => Math.max(widest, batch.size), 0),
+    averageConcurrency: averageConcurrency(nodes, nowMs),
     unmeasurableNodeCount: unmeasurable,
     verdict:
       attemptedBatches.length === 0

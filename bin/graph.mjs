@@ -173,8 +173,10 @@ function printProjectSpend(projectSpend) {
 
 function printStats(stats) {
   process.stdout.write(
-    `runs=${stats.runCount} agents=${stats.nodeCount} ` +
-      `multi-agent=${stats.multiAgentRunCount} never-parallel=${stats.sequentialRunCount}\n` +
+    `runs=${stats.runCount} agents=${stats.nodeCount} (+${stats.workflowAgentCount ?? 0} inside workflows) ` +
+      `multi-agent=${stats.multiAgentRunCount} parallel=${stats.parallelRunCount ?? "-"} ` +
+      `never-parallel=${stats.sequentialRunCount} ` +
+      `avg-concurrency=${stats.averageConcurrency == null ? "-" : stats.averageConcurrency.toFixed(2)}\n` +
       `tokens=${stats.totalTokens.toLocaleString()} ` +
       `spend~${formatUsd(stats.totalCostUsd)} ` +
       `(${formatUsd(stats.totalCostLowUsd)}–${formatUsd(stats.totalCostHighUsd)}, ` +
@@ -189,6 +191,12 @@ function printStats(stats) {
         `${formatUsd(bucket.costUsd).padStart(8)}  ` +
         `${bucket.untimedCount === bucket.count ? "-" : formatMinutes(bucket.durationMs)}\n`,
     );
+  }
+  if (stats.byWorkflowAgentType?.length) {
+    process.stdout.write("\ninside workflows (spend is on the Workflow row)\n");
+    for (const bucket of stats.byWorkflowAgentType) {
+      process.stdout.write(`  ${bucket.key.padEnd(26)} n=${String(bucket.count).padStart(3)}  ${formatMinutes(bucket.durationMs)}\n`);
+    }
   }
   process.stdout.write("\nrepeated shapes (harvest candidates)\n");
   for (const bucket of stats.repeatedSequences) {

@@ -2,10 +2,13 @@ import { spendByProject } from "./projects.mjs";
 import {
   agentTypeLabel,
   agentTypeShapeKey,
+  concurrencyTotals,
   dedupeNodes,
   nodeDurationMs,
   peakConcurrency,
   serializationCostMs,
+  shapeNodes,
+  spendNodes,
 } from "./analysis.mjs";
 import { estimateCost } from "./pricing.mjs";
 
@@ -25,9 +28,12 @@ function selectRunsWithNodes(store) {
     .filter((entry) => entry.nodes.length > 0);
 }
 
+/** One run's shape from the agents that ran, and its spend from the nodes that carry tokens. */
 function summarizeRun({ run, nodes }) {
-  const totalTokens = nodes.reduce((sum, node) => sum + (node.total_tokens ?? 0), 0);
-  const costs = nodes.map((node) =>
+  const ranNodes = shapeNodes(nodes);
+  const spentNodes = spendNodes(nodes);
+  const totalTokens = spentNodes.reduce((sum, node) => sum + (node.total_tokens ?? 0), 0);
+  const costs = spentNodes.map((node) =>
     estimateCost({ totalTokens: node.total_tokens, model: node.resolved_model ?? node.model }),
   );
   const sumOfCosts = (field) => costs.reduce((sum, cost) => sum + cost[field], 0);
@@ -35,14 +41,17 @@ function summarizeRun({ run, nodes }) {
     runId: run.id,
     cwd: run.cwd,
     startedAt: run.started_at,
-    nodeCount: nodes.length,
-    peak: peakConcurrency(nodes),
-    serializedMs: serializationCostMs(nodes),
+    nodeCount: ranNodes.length,
+    peak: peakConcurrency(ranNodes),
+    serializedMs: serializationCostMs(ranNodes),
+    ...concurrencyTotals(ranNodes),
     totalTokens,
     costUsd: sumOfCosts("estimate"),
     costLowUsd: sumOfCosts("low"),
     costHighUsd: sumOfCosts("high"),
-    agentTypes: nodes.map(agentTypeShapeKey),
+    // Spend nodes, so a Workflow run keeps its Workflow step rather than reading as the
+    // verifiers inside it, which would make every implement-verify run a harvest candidate.
+    agentTypes: spentNodes.map(agentTypeShapeKey),
   };
 }
 
@@ -102,15 +111,24 @@ export function repeatedSequences(summaries) {
 /** Aggregate view over every recorded run: shape, waste, spend, and repeat candidates. */
 export function computeStats(store) {
   const summaries = selectRunsWithNodes(store).map(summarizeRun);
-  const allNodes = dedupeNodes(store.prepare("SELECT * FROM nodes").all());
+  const dedupedNodes = dedupeNodes(store.prepare("SELECT * FROM nodes").all());
+  const allNodes = spendNodes(dedupedNodes);
+  const workflowAgents = dedupedNodes.filter((node) => node.parent_node_id);
   const multiAgent = summaries.filter((entry) => entry.nodeCount >= MULTI_AGENT_THRESHOLD);
+  const multiAgentBusyMs = multiAgent.reduce((sum, entry) => sum + entry.busyMs, 0);
   const sequential = sequentialFanouts(summaries);
 
   return {
     projectSpend: spendByProject(store),
     runCount: summaries.length,
     nodeCount: allNodes.length,
+    workflowAgentCount: workflowAgents.length,
     multiAgentRunCount: multiAgent.length,
+    parallelRunCount: multiAgent.filter((entry) => entry.peak > 1).length,
+    averageConcurrency:
+      multiAgentBusyMs > 0
+        ? multiAgent.reduce((sum, entry) => sum + entry.agentMs, 0) / multiAgentBusyMs
+        : null,
     sequentialRunCount: sequential.length,
     totalTokens: summaries.reduce((sum, entry) => sum + entry.totalTokens, 0),
     totalCostUsd: summaries.reduce((sum, entry) => sum + entry.costUsd, 0),
@@ -120,6 +138,9 @@ export function computeStats(store) {
     sequentialCostUsd: sequential.reduce((sum, entry) => sum + entry.costUsd, 0),
     byAgentType: tallyBy(allNodes, agentTypeLabel).slice(0, TOP_LIST_LENGTH),
     byModel: tallyBy(allNodes, (node) => node.resolved_model ?? node.model).slice(0, TOP_LIST_LENGTH),
+    byWorkflowAgentType: tallyBy(workflowAgents, agentTypeLabel)
+      .sort((left, right) => right.count - left.count)
+      .slice(0, TOP_LIST_LENGTH),
     worstSequential: sequential.slice(0, TOP_LIST_LENGTH),
     repeatedSequences: repeatedSequences(summaries),
   };
