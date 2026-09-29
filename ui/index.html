@@ -125,6 +125,18 @@
 </div>
 
 <div class="card">
+  <h2>Efficiency by week</h2>
+  <table>
+    <thead><tr>
+      <th>week</th><th>runs</th><th>multi-agent runs that overlapped</th><th>avg agents at once</th>
+      <th>serialized</th><th>topology declared</th><th>spend</th><th>you stepped in / session</th>
+    </tr></thead>
+    <tbody id="trendRows"></tbody>
+  </table>
+  <p class="edge" style="color:var(--ink-2)">Agents inside a Workflow count as the agents that ran. Serialized is agent-time in runs that never overlapped, beyond the slowest agent.</p>
+</div>
+
+<div class="card">
   <h2>Runs</h2>
   <div class="tiles" id="tiles"></div>
   <table>
@@ -224,7 +236,16 @@ async function api(path, options = {}) {
   return response.json();
 }
 
-const seconds = (ms) => (ms ? `${(ms / MILLISECONDS_PER_SECOND).toFixed(1)}s` : "–");
+const SECONDS_BEFORE_MINUTES = 120;
+const MINUTES_BEFORE_HOURS = 120;
+/** A duration in the largest unit that keeps it under three digits: 95.0s, 12.4m, 3.1h. */
+const seconds = (ms) => {
+  if (!ms) return "–";
+  const totalSeconds = ms / MILLISECONDS_PER_SECOND;
+  if (totalSeconds < SECONDS_BEFORE_MINUTES) return `${totalSeconds.toFixed(1)}s`;
+  const totalMinutes = totalSeconds / 60;
+  return totalMinutes < MINUTES_BEFORE_HOURS ? `${totalMinutes.toFixed(1)}m` : `${(totalMinutes / 60).toFixed(1)}h`;
+};
 const clock = (iso) => (iso ? new Date(iso).toLocaleTimeString() : "–");
 
 function statusColor(status) {
@@ -283,6 +304,48 @@ function renderRuns(runs) {
 const nodeEndIso = (node) => node.notified_at ?? (node.is_async ? null : node.ended_at);
 const nodeWorkMs = (node) =>
   node.true_duration_ms ?? (node.is_async ? null : (node.duration_ms ?? null));
+const TREND_WEEKS_SHOWN = 10;
+const money = (amount) => (amount ? `$${amount.toFixed(2)}` : "–");
+
+/** Nodes in spawn order with each Workflow's agents listed right after it. */
+function nestedNodes(nodes) {
+  const childrenOf = new Map();
+  for (const node of nodes.filter((candidate) => candidate.parent_node_id)) {
+    if (!childrenOf.has(node.parent_node_id)) childrenOf.set(node.parent_node_id, []);
+    childrenOf.get(node.parent_node_id).push(node);
+  }
+  return nodes
+    .filter((node) => !node.parent_node_id)
+    .flatMap((node) => [{ ...node, hasChildren: childrenOf.has(node.id) }, ...(childrenOf.get(node.id) ?? []).map((child) => ({ ...child, isChild: true }))]);
+}
+
+const nodeName = (node) => `${node.isChild ? "↳ " : ""}${node.agent_type ?? node.tool}`;
+const nodeCost = (node) => (node.isChild ? "on Workflow" : money(node.costUsd));
+
+function renderTrend(weeks) {
+  document.getElementById("trendRows").innerHTML = [...weeks]
+    .reverse()
+    .slice(0, TREND_WEEKS_SHOWN)
+    .map((week) => {
+      const share = week.multiAgentRuns > 0 ? week.parallelRuns / week.multiAgentRuns : null;
+      const shareBar = share === null
+        ? "–"
+        : `<span style="display:inline-block;width:60px;height:8px;background:var(--grid);border-radius:2px;vertical-align:middle">` +
+          `<span style="display:block;width:${Math.round(share * 100)}%;height:100%;background:var(--good);border-radius:2px"></span></span> ` +
+          `${week.parallelRuns} of ${week.multiAgentRuns}`;
+      return `<tr>
+        <td class="mono">${week.week}</td>
+        <td>${week.runs}</td>
+        <td>${shareBar}</td>
+        <td>${week.averageConcurrency == null ? "–" : week.averageConcurrency.toFixed(2)}</td>
+        <td>${seconds(week.serializedMs)}</td>
+        <td>${week.declaredRuns} of ${week.multiAgentRuns}</td>
+        <td>${money(week.costUsd)}</td>
+        <td>${week.humanInterventionsPerSession == null ? "–" : week.humanInterventionsPerSession.toFixed(2)}</td>
+      </tr>`;
+    })
+    .join("");
+}
 
 function renderOrchestration(detail) {
   const { nodes, parallelism, batches, topology, diff, checks, interventions } = detail;
@@ -297,21 +360,22 @@ function renderOrchestration(detail) {
         ? "var(--critical)"
         : "var(--warning)";
 
-  const rows = nodes.map((node) => {
+  const rows = nestedNodes(nodes).map((node) => {
     const batch = batchOf.get(node.id);
     const isFannedOut = batch && batch.size > 1;
     const workMs = nodeWorkMs(node);
     return `<tr class="node-row" data-node="${node.id}">
       <td>${batch ? batch.index + 1 : "–"}${isFannedOut ? ` <span style="color:var(--good)">×${batch.size}</span>` : ""}</td>
-      <td class="mono">${escapeHtml(node.agent_type ?? node.tool)}</td>
+      <td class="mono">${escapeHtml(nodeName(node))}</td>
       <td>${escapeHtml(node.label ?? "–")}</td>
       <td class="mono">${escapeHtml(node.resolved_model ?? node.model ?? "inherited")}</td>
       <td>${clock(node.started_at)}</td>
       <td>${nodeEndIso(node) ? clock(nodeEndIso(node)) : "<span style='color:var(--warning)'>unknown</span>"}</td>
       <td>${workMs === null ? "–" : seconds(workMs)}</td>
       <td>${node.total_tokens ? node.total_tokens.toLocaleString() : "–"}</td>
+      <td>${nodeCost(node)}</td>
     </tr>
-    <tr class="node-detail" data-detail="${node.id}" hidden><td colspan="8">
+    <tr class="node-detail" data-detail="${node.id}" hidden><td colspan="9">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
         <div><div class="edge">sent down ↓</div><pre class="excerpt">${escapeHtml(node.prompt_text ?? "(not captured)")}</pre></div>
         <div><div class="edge">came back ↑</div><pre class="excerpt">${escapeHtml(node.result_text ?? "(not captured)")}</pre></div>
@@ -324,6 +388,8 @@ function renderOrchestration(detail) {
         <span class="v" style="color:${verdictColor}">${parallelism.verdict}</span></div>
       <div class="tile"><span class="k">delegation batches</span>
         <span class="v">${parallelism.batchCount}, widest ${parallelism.largestBatch}</span></div>
+      <div class="tile"><span class="k">avg agents at once</span>
+        <span class="v">${parallelism.averageConcurrency == null ? "–" : parallelism.averageConcurrency.toFixed(2)}</span></div>
       <div class="tile"><span class="k">fan-outs achieved</span>
         <span class="v">${parallelism.achievedCount} of ${parallelism.measuredCount} measured</span></div>
       <div class="tile"><span class="k">shape</span>
@@ -343,7 +409,7 @@ function renderOrchestration(detail) {
       : ""}
     <table style="margin-top:10px"><thead><tr>
       <th>batch</th><th>agent</th><th>task</th><th>model</th>
-      <th>spawned</th><th>finished</th><th>worked</th><th>tokens</th>
+      <th>spawned</th><th>finished</th><th>worked</th><th>tokens</th><th>cost</th>
     </tr></thead><tbody>${rows.join("")}</tbody></table>
     <p class="edge" style="color:var(--ink-2)">Click a row to see what was sent down and what came back.</p>`;
 
@@ -364,18 +430,24 @@ function renderTimeline(detail) {
     document.getElementById("timeline").innerHTML = `<p class="empty">No nodes in this run.</p>`;
     return;
   }
-  const starts = nodes.map((node) => Date.parse(node.started_at));
-  const ends = nodes.map((node) => Date.parse(nodeEndIso(node) ?? node.started_at));
+  const ordered = nestedNodes(nodes);
+  // A Workflow's own end is when the lead saw its notice; its agents' ends bound the chart instead.
+  const timed = ordered.filter((node) => !node.hasChildren);
+  const starts = timed.map((node) => Date.parse(node.started_at));
+  const ends = timed.map((node) => Date.parse(nodeEndIso(node) ?? node.started_at));
   const originMs = Math.min(...starts);
   const spanMs = Math.max(Math.max(...ends) - originMs, 1);
 
-  document.getElementById("timeline").innerHTML = nodes
+  document.getElementById("timeline").innerHTML = ordered
     .map((node) => {
       const offsetPercent = ((Date.parse(node.started_at) - originMs) / spanMs) * 100;
-      const widthPercent = Math.max(((nodeWorkMs(node) ?? 0) / spanMs) * 100, TRACK_MIN_PERCENT);
+      const widthPercent = Math.min(
+        Math.max(((nodeWorkMs(node) ?? 0) / spanMs) * 100, TRACK_MIN_PERCENT),
+        Math.max(100 - offsetPercent, TRACK_MIN_PERCENT),
+      );
       const isUnknownEnd = nodeEndIso(node) === null;
       return `<div style="display:grid;grid-template-columns:190px 1fr;gap:12px;align-items:center;margin:2px 0">
-        <div class="bar-label">${escapeHtml(node.agent_type ?? node.tool)} · ${escapeHtml(node.label ?? "")}</div>
+        <div class="bar-label" style="${node.isChild ? "padding-left:14px" : ""}">${escapeHtml(nodeName(node))} · ${escapeHtml(node.label ?? "")}</div>
         <div class="track"><div class="bar" data-node="${node.id}"
           style="left:${offsetPercent}%;width:${widthPercent}%;background:${statusColor(node.status)};${isUnknownEnd ? "opacity:.35" : ""}"></div></div>
       </div>`;
@@ -383,14 +455,14 @@ function renderTimeline(detail) {
     .join("");
 
   for (const bar of document.querySelectorAll(".bar")) {
-    const node = nodes.find((candidate) => candidate.id === bar.dataset.node);
+    const node = ordered.find((candidate) => candidate.id === bar.dataset.node);
     bar.addEventListener("mousemove", (event) =>
       showTooltip(
         event,
         `<b>${node.label ?? node.tool}</b><br>` +
           `${node.agent_type ?? "–"} · ${node.resolved_model ?? node.model ?? "inherited"}<br>` +
           `${node.status} · ${seconds(node.duration_ms)}` +
-          `${node.total_tokens ? ` · ${node.total_tokens.toLocaleString()} tokens` : ""}` +
+          `${node.total_tokens ? ` · ${node.total_tokens.toLocaleString()} tokens · ${money(node.costUsd)}` : ""}` +
           `${node.tool_use_count ? ` · ${node.tool_use_count} tool calls` : ""}` +
           `<br><span class="mono">${node.agent_id ?? node.id}</span>`,
       ),
@@ -592,6 +664,7 @@ async function refresh() {
     workflowList,
     doctorReport,
     proposalList,
+    trendReport,
   ] = await Promise.all([
       api("/v1/config"),
       api("/v1/runs?limit=25"),
@@ -601,9 +674,11 @@ async function refresh() {
       api("/v1/workflows"),
       api("/v1/doctor"),
       api("/v1/proposals"),
+      api("/v1/trend"),
     ]);
   renderStatus(state);
   renderProposals(proposalList.proposals);
+  renderTrend(trendReport.weeks);
   renderTiles(runList.runs);
   renderRuns(runList.runs);
   renderChecks(checkList.checks);
