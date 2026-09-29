@@ -168,9 +168,31 @@ export function selectNodes(store, runId) {
   return dedupeNodes(rows);
 }
 
-export function getRun(store, runId) {
-  const run = store.prepare("SELECT * FROM runs WHERE id = ?").get(runId);
-  if (!run) return null;
+/** `graph runs` prints this many characters of a run id, so a prefix this long is accepted. */
+export const MIN_RUN_ID_PREFIX_LENGTH = 8;
+export const AMBIGUOUS_RUN_ID = "ambiguous run id";
+
+/**
+ * The run with this exact id, else the single run whose id starts with it. Returns
+ * `{ ambiguous: [ids] }` when several match, and null for a prefix shorter than the printed one.
+ */
+function resolveRun(store, runIdOrPrefix) {
+  const exact = store.prepare("SELECT * FROM runs WHERE id = ?").get(runIdOrPrefix);
+  if (exact) return { run: exact };
+  if (runIdOrPrefix.length < MIN_RUN_ID_PREFIX_LENGTH) return null;
+  const matches = store
+    .prepare("SELECT * FROM runs WHERE substr(id, 1, length(?1)) = ?1 ORDER BY started_at DESC")
+    .all(runIdOrPrefix);
+  if (matches.length === 1) return { run: matches[0] };
+  return matches.length > 1 ? { ambiguous: matches.map((match) => match.id) } : null;
+}
+
+export function getRun(store, runIdOrPrefix) {
+  const resolved = resolveRun(store, runIdOrPrefix);
+  if (!resolved) return null;
+  if (resolved.ambiguous) return { error: AMBIGUOUS_RUN_ID, matches: resolved.ambiguous };
+  const { run } = resolved;
+  const runId = run.id;
   const nodes = selectNodes(store, runId);
   const declaredEdges = store
     .prepare("SELECT * FROM edges WHERE run_id = ? AND kind = 'declared'")

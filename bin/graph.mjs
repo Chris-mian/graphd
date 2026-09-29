@@ -318,6 +318,24 @@ function setEnforcement(isEnabled) {
   process.stdout.write(`enforce=${isEnabled}\n`);
 }
 
+/** Run detail by full id or by the 8-character prefix `graph runs` prints. */
+async function showRun(runIdOrPrefix) {
+  if (!runIdOrPrefix) throw new Error("usage: graph show <run-id, or the prefix graph runs prints>");
+  let detail;
+  try {
+    detail = await callDaemon(`/v1/runs/${encodeURIComponent(runIdOrPrefix)}`);
+  } catch (error) {
+    const [status, ...body] = String(error.message).split(" ");
+    if (status === "404") throw new Error(`no run matches ${runIdOrPrefix}`);
+    if (status === "409") {
+      const { matches } = JSON.parse(body.join(" "));
+      throw new Error(`${runIdOrPrefix} matches ${matches.length} runs: ${matches.join(", ")}`);
+    }
+    throw error;
+  }
+  printRunDetail(detail);
+}
+
 // Piping to head/less closes stdout early; that is not an error worth a stack trace.
 process.stdout.on("error", (error) => {
   if (error.code === "EPIPE") process.exit(0);
@@ -333,7 +351,7 @@ try {
       printRuns((await callDaemon(`/v1/runs?limit=${limit}`)).runs);
       break;
     case "show":
-      printRunDetail(await callDaemon(`/v1/runs/${encodeURIComponent(argument ?? "")}`));
+      await showRun(argument);
       break;
     case "checks":
       printChecks((await callDaemon(`/v1/policy/checks?limit=${limit}`)).checks);

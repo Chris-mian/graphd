@@ -20,6 +20,7 @@ import { computeLessons } from "./lessons.mjs";
 import { acceptRule, acceptedRulesBlock, readAcceptedRules } from "./accepted.mjs";
 import { addProposals, decideProposal, readProposals } from "./proposals.mjs";
 import {
+  AMBIGUOUS_RUN_ID,
   getRun,
   handleEvent,
   handlePolicyCheck,
@@ -37,6 +38,7 @@ const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_NOT_FOUND = 404;
+const HTTP_CONFLICT = 409;
 const HTTP_PAYLOAD_TOO_LARGE = 413;
 const HTTP_SERVER_ERROR = 500;
 const BEARER_PREFIX = "Bearer ";
@@ -153,6 +155,10 @@ async function dispatch(store, url, request, response) {
       : await routePost(store, config, url, request);
   if (result === null || result === undefined) {
     sendJson(response, HTTP_NOT_FOUND, { error: "not found" });
+    return;
+  }
+  if (result.error === AMBIGUOUS_RUN_ID) {
+    sendJson(response, HTTP_CONFLICT, result);
     return;
   }
   sendJson(response, HTTP_OK, result);
