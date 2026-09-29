@@ -202,18 +202,30 @@ enforcement is on with enough runs behind it to trust the rule. Same data render
 
 ## Scheduled jobs
 
-Three launch agents, all logging under `~/.graphd/logs/`:
+Four launch agents, all logging under `~/.graphd/logs/`:
 
 | Label | When | What |
 | --- | --- | --- |
 | `com.chrisliu.graphd` | always | the daemon on `127.0.0.1:8787` |
 | `com.chrisliu.graphd-import` | hourly | backfills nodes and interventions from transcripts |
 | `com.chrisliu.graphd-harvest` | Mondays 08:45 | `bin/run-harvest.sh` — refreshes the store, runs `/lesson-harvest` headless, files proposals pending |
+| `com.chrisliu.nightshift` | nightly 01:30, real shift every third night | `bin/run-nightshift.sh` — drains `~/nightshift/TASKS.md` with headless `/nightshift` calls, then writes the morning summary |
 
 A job that stops running is silent, which reads exactly like a job with nothing to report. Two
 things watch for that: `hooks/inject-pending-decisions.sh` at session start, and the
 `scheduled jobs` check in `graph doctor`. Both also cover `com.chrisliu.spine-refresh`, since a
 stale document index degrades what spine hands a session.
+
+The night shift exists because an accepted manual proposal is filed as a `~/nightshift/TASKS.md`
+task, and nothing ran that file unattended. `run-nightshift.sh` starts a shift only when three
+nights (less six hours of slack) have passed since the last one, the local hour is before 05:00,
+no `~/nightshift/STOP` exists, and a `[todo]` task is waiting. A trigger missed while the Mac slept
+fires on wake; the hour cutoff turns that into a skip rather than a daytime shift. Each iteration
+is one `/nightshift` call, capped at 90 minutes; the shift ends on a `NIGHTSHIFT_TERMINATE`
+marker, a non-zero exit, an iteration that left `TASKS.md` unchanged, or eight iterations. The
+`~/nightshift/.last-scheduled-run` stamp is touched only when a shift starts, and doctor and the
+SessionStart hook warn once it is four days old. `NIGHTSHIFT_LATEST_START_HOUR=24
+bin/run-nightshift.sh` starts one by hand, still subject to the three-night gate.
 
 `run-harvest.sh` pins its model rather than inheriting the default, which moves ahead of
 whatever CLI version is installed and fails the whole run with a 400 when it does.

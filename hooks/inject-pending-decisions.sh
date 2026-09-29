@@ -15,9 +15,12 @@ readonly PROPOSALS_PATH="$STATE_DIR/proposals.json"
 readonly IMPORT_LOG_PATH="$STATE_DIR/logs/graphd-import.log"
 readonly HARVEST_LOG_PATH="$STATE_DIR/logs/harvest.log"
 readonly SPINE_REFRESH_LOG_PATH="${SPINE_STATE_DIR:-$HOME/.local/state/spine}/refresh.log"
+readonly NIGHTSHIFT_STAMP_PATH="${NIGHTSHIFT_DIR:-$HOME/nightshift}/.last-scheduled-run"
 # A weekly job is late once a second Monday has passed; an hourly one within half a day.
 readonly HARVEST_STALE_SECONDS=1209600
 readonly HOURLY_JOB_STALE_SECONDS=43200
+# The night shift runs every third night; late once a fourth day has passed.
+readonly NIGHTSHIFT_STALE_SECONDS=345600
 
 command -v jq >/dev/null 2>&1 || exit 0
 cat >/dev/null
@@ -38,7 +41,7 @@ fi
 check_job_is_current() {
   local log_path="$1" label="$2" stale_seconds="$3" age
   [[ -f "$log_path" ]] || {
-    notes+=("$label has never written a log — check \`launchctl list | grep -iE 'graphd|spine'\`.")
+    notes+=("$label has never written a log — check \`launchctl list | grep -iE 'graphd|spine|nightshift'\`.")
     return
   }
   age=$(( $(date +%s) - $(stat -f %m "$log_path") ))
@@ -49,6 +52,7 @@ check_job_is_current() {
 check_job_is_current "$IMPORT_LOG_PATH" "graphd import" "$HOURLY_JOB_STALE_SECONDS"
 check_job_is_current "$HARVEST_LOG_PATH" "graphd harvest" "$HARVEST_STALE_SECONDS"
 check_job_is_current "$SPINE_REFRESH_LOG_PATH" "spine refresh" "$HOURLY_JOB_STALE_SECONDS"
+check_job_is_current "$NIGHTSHIFT_STAMP_PATH" "nightshift" "$NIGHTSHIFT_STALE_SECONDS"
 
 ((${#notes[@]} == 0)) && exit 0
 

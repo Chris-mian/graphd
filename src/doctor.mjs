@@ -20,6 +20,14 @@ const SCHEDULED_JOBS = [
     logPath: join(homedir(), ".local", "state", "spine", "refresh.log"),
     maxAgeHours: 12,
   },
+  // The stamp is touched only when a shift really starts, so a schedule that keeps skipping
+  // (asleep at 01:30, STOP left behind) goes stale here even while the nightly trigger fires.
+  // Three nights plus a day.
+  {
+    name: "nightshift",
+    logPath: join(homedir(), "nightshift", ".last-scheduled-run"),
+    maxAgeHours: 96,
+  },
 ];
 const SECRET_FILE_MODE = 0o600;
 const MINIMUM_RUNS_BEFORE_ENFORCING = 10;
