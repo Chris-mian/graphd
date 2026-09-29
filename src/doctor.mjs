@@ -20,12 +20,12 @@ const SCHEDULED_JOBS = [
     logPath: join(homedir(), ".local", "state", "spine", "refresh.log"),
     maxAgeHours: 12,
   },
-  // The stamp is touched only when a shift really starts, so a schedule that keeps skipping
-  // (asleep at 01:30, STOP left behind) goes stale here even while the nightly trigger fires.
+  // Touched when a trigger finds no todo or a shift completes an iteration, so a shift that
+  // always fails, or never starts (asleep at 01:30, STOP left behind), goes stale here.
   // Three nights plus a day.
   {
     name: "nightshift",
-    logPath: join(homedir(), "nightshift", ".last-scheduled-run"),
+    logPath: join(homedir(), "nightshift", ".last-healthy-run"),
     maxAgeHours: 96,
   },
 ];

@@ -64,9 +64,36 @@ test("stats report no unknown bucket, and no minutes for a Workflow container", 
   assert.equal(buckets.unknown, undefined);
   assert.equal(buckets["general-purpose (default)"].count, 2);
   assert.equal(buckets["general-purpose (default)"].durationMs, 2000);
-  assert.equal(buckets["Workflow:implement-verify"].durationMs, null);
+  assert.equal(buckets["Workflow:implement-verify"].durationMs, 0);
+  assert.equal(buckets["Workflow:implement-verify"].untimedCount, 1);
+});
 
-  // Explicit and defaulted general-purpose are one agent in a run's shape, not two.
-  const stats = computeStats(store);
-  assert.ok(stats.repeatedSequences.every((bucket) => !bucket.shape.includes("(default)")));
+test("a Workflow sharing a model bucket leaves the other nodes' minutes intact", () => {
+  const store = openStore(":memory:");
+  addNode(store, { id: "a", runId: "r1", durationMs: 5000, startedAt: "2026-09-24T11:00:00Z" });
+  addNode(store, {
+    id: "w",
+    runId: "r1",
+    tool: "Workflow",
+    label: "implement-verify",
+    durationMs: SIXTY_EIGHT_HOURS_MS,
+    startedAt: "2026-09-24T11:05:00Z",
+  });
+  const [unknownModel] = computeStats(store).byModel;
+  assert.equal(unknownModel.count, 2);
+  assert.equal(unknownModel.durationMs, 5000);
+});
+
+test("runs mixing explicit and defaulted general-purpose share one shape", () => {
+  const store = openStore(":memory:");
+  addNode(store, { id: "a1", runId: "r1", agentType: "general-purpose", startedAt: "2026-09-24T11:00:00Z" });
+  addNode(store, { id: "a2", runId: "r1", agentType: "Explore", startedAt: "2026-09-24T11:10:00Z" });
+  addNode(store, { id: "b1", runId: "r2", startedAt: "2026-09-24T12:00:00Z" });
+  addNode(store, { id: "b2", runId: "r2", agentType: "Explore", startedAt: "2026-09-24T12:10:00Z" });
+
+  const shapes = computeStats(store).repeatedSequences;
+  assert.deepEqual(
+    shapes.map((bucket) => [bucket.shape, bucket.runs]),
+    [["Explore + general-purpose", 2]],
+  );
 });

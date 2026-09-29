@@ -25,7 +25,6 @@ function measurableNodes(nodes) {
   return nodes.filter((node) => node.started_at && hasKnownEnd(node));
 }
 
-/** Wall time the node spent working, preferring the async-aware measurement. */
 /**
  * The bucket a node's spend is reported under. An omitted subagent_type runs general-purpose
  * ("If omitted, the general-purpose agent is used."); a Workflow is named by its script.
@@ -46,6 +45,7 @@ export function agentTypeShapeKey(node) {
   return node.tool === "Workflow" ? "Workflow" : "general-purpose";
 }
 
+/** Wall time the node spent working, preferring the async-aware measurement. */
 export function nodeDurationMs(node) {
   if (node.true_duration_ms) return node.true_duration_ms;
   if (node.is_async) return MILLISECONDS_UNKNOWN;

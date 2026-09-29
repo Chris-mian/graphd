@@ -15,7 +15,7 @@ readonly PROPOSALS_PATH="$STATE_DIR/proposals.json"
 readonly IMPORT_LOG_PATH="$STATE_DIR/logs/graphd-import.log"
 readonly HARVEST_LOG_PATH="$STATE_DIR/logs/harvest.log"
 readonly SPINE_REFRESH_LOG_PATH="${SPINE_STATE_DIR:-$HOME/.local/state/spine}/refresh.log"
-readonly NIGHTSHIFT_STAMP_PATH="${NIGHTSHIFT_DIR:-$HOME/nightshift}/.last-scheduled-run"
+readonly NIGHTSHIFT_STAMP_PATH="${NIGHTSHIFT_DIR:-$HOME/nightshift}/.last-healthy-run"
 # A weekly job is late once a second Monday has passed; an hourly one within half a day.
 readonly HARVEST_STALE_SECONDS=1209600
 readonly HOURLY_JOB_STALE_SECONDS=43200

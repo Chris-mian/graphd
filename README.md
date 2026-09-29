@@ -226,9 +226,11 @@ nights (less six hours of slack) have passed since the last one, the local hour 
 no `~/nightshift/STOP` exists, and a `[todo]` task is waiting. A trigger missed while the Mac slept
 fires on wake; the hour cutoff turns that into a skip rather than a daytime shift. Each iteration
 is one `/nightshift` call, capped at 90 minutes; the shift ends on a `NIGHTSHIFT_TERMINATE`
-marker, a non-zero exit, an iteration that left `TASKS.md` unchanged, or eight iterations. The
-`~/nightshift/.last-scheduled-run` stamp is touched only when a shift starts, and doctor and the
-SessionStart hook warn once it is four days old. `NIGHTSHIFT_LATEST_START_HOUR=24
+marker, a non-zero exit, an iteration that left `TASKS.md` unchanged, eight iterations, or the
+clock passing 07:00 (two hours after the start cutoff). `~/nightshift/.last-scheduled-run` gates
+the next shift; `~/nightshift/.last-healthy-run` is touched only when a trigger finds no todo or
+an iteration completes, and doctor and the SessionStart hook warn once it is four days old — so
+a shift that fails every time, or never starts, is reported rather than looking current. `NIGHTSHIFT_LATEST_START_HOUR=24
 bin/run-nightshift.sh` starts one by hand, still subject to the three-night gate.
 
 `run-harvest.sh` pins its model rather than inheriting the default, which moves ahead of

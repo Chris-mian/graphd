@@ -15,9 +15,12 @@ set -uo pipefail
 readonly NIGHTSHIFT_DIR="${HOME}/nightshift"
 readonly TASKS_PATH="${NIGHTSHIFT_DIR}/TASKS.md"
 readonly STOP_PATH="${NIGHTSHIFT_DIR}/STOP"
-# Written when a shift actually starts. graph doctor and the SessionStart hook read its age, so
-# a schedule that keeps skipping is reported rather than silent.
+# Written when a shift starts; gates the next one.
 readonly STAMP_PATH="${NIGHTSHIFT_DIR}/.last-scheduled-run"
+# Written when the schedule is known to be working: a trigger found no todo, or a shift completed
+# at least one iteration. graph doctor and the SessionStart hook read its age, so a shift that
+# fails every time or never gets a chance to start goes stale instead of looking healthy.
+readonly HEALTHY_STAMP_PATH="${NIGHTSHIFT_DIR}/.last-healthy-run"
 readonly LOG_DIR="${HOME}/.graphd/logs"
 readonly LOG_FILE="${LOG_DIR}/nightshift.log"
 
@@ -29,6 +32,8 @@ readonly MIN_SECONDS_BETWEEN_SHIFTS=$((3 * 24 * SECONDS_PER_HOUR - 6 * SECONDS_P
 # morning wake from launching a shift into the working day; the next night retries. Override with
 # NIGHTSHIFT_LATEST_START_HOUR=24 to start a shift by hand in the daytime.
 readonly LATEST_START_HOUR="${NIGHTSHIFT_LATEST_START_HOUR:-5}"
+# No new iteration starts after this hour, so a shift ends by roughly 08:30 at the latest.
+readonly ITERATION_HOURS_AFTER_START_CUTOFF=2
 readonly MAX_ITERATIONS=8
 readonly ITERATION_TIMEOUT_SECONDS=$((90 * 60))
 readonly ITERATION_MAX_TURNS=200
@@ -42,6 +47,10 @@ mkdir -p "$LOG_DIR"
 
 log() {
   printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" >>"$LOG_FILE"
+}
+
+current_local_hour() {
+  echo $((10#$(date '+%H')))
 }
 
 has_todo() {
@@ -72,6 +81,12 @@ run_with_timeout() {
   exit 0
 }
 
+[[ "$LATEST_START_HOUR" =~ ^[0-9]+$ ]] || {
+  log "skip: NIGHTSHIFT_LATEST_START_HOUR=${LATEST_START_HOUR} is not an hour"
+  exit 0
+}
+readonly LATEST_ITERATION_HOUR=$((LATEST_START_HOUR + ITERATION_HOURS_AFTER_START_CUTOFF))
+
 now_seconds="$(date +%s)"
 if [[ -f "$STAMP_PATH" ]]; then
   seconds_since_last=$((now_seconds - $(stat -f %m "$STAMP_PATH")))
@@ -81,7 +96,7 @@ if [[ -f "$STAMP_PATH" ]]; then
   fi
 fi
 
-current_hour=$((10#$(date '+%H')))
+current_hour="$(current_local_hour)"
 if ((current_hour >= LATEST_START_HOUR)); then
   log "skip: ${current_hour}:00 is past the ${LATEST_START_HOUR}:00 start cutoff, retrying tomorrow night"
   exit 0
@@ -89,6 +104,7 @@ fi
 
 has_todo || {
   log "skip: no todo tasks"
+  touch "$HEALTHY_STAMP_PATH"
   exit 0
 }
 
@@ -121,6 +137,10 @@ iterations_run=0
 for ((iteration = 1; iteration <= MAX_ITERATIONS; iteration++)); do
   [[ -f "$STOP_PATH" ]] && { log "STOP file appeared, ending shift"; break; }
   has_todo || { log "no todo tasks remain"; break; }
+  if (($(current_local_hour) >= LATEST_ITERATION_HOUR)); then
+    log "past ${LATEST_ITERATION_HOUR}:00, starting no more iterations"
+    break
+  fi
 
   tasks_before="$(md5 -q "$TASKS_PATH")"
   iteration_output="$(mktemp -t nightshift-iteration)"
@@ -142,6 +162,7 @@ for ((iteration = 1; iteration <= MAX_ITERATIONS; iteration++)); do
     break
   fi
   if grep -q "NIGHTSHIFT_TERMINATE" "$iteration_output"; then
+    touch "$HEALTHY_STAMP_PATH"
     log "iteration ${iteration} reported TERMINATE, ending shift"
     rm -f "$iteration_output"
     break
@@ -153,9 +174,12 @@ for ((iteration = 1; iteration <= MAX_ITERATIONS; iteration++)); do
     log "iteration ${iteration} left TASKS.md unchanged, ending shift"
     break
   fi
+  touch "$HEALTHY_STAMP_PATH"
 done
 
-if ((iterations_run > 0)); then
+if [[ -f "$STOP_PATH" ]]; then
+  log "STOP present, skipping the morning summary"
+elif ((iterations_run > 0)); then
   log "writing morning summary"
   run_with_timeout "$ITERATION_TIMEOUT_SECONDS" \
     "$claude_bin" -p \

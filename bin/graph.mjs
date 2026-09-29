@@ -194,7 +194,7 @@ function printStats(stats) {
     process.stdout.write(
       `  ${bucket.key.padEnd(26)} n=${String(bucket.count).padStart(3)} ` +
         `${formatUsd(bucket.costUsd).padStart(8)}  ` +
-        `${bucket.durationMs === null ? "-" : formatMinutes(bucket.durationMs)}\n`,
+        `${bucket.untimedCount === bucket.count ? "-" : formatMinutes(bucket.durationMs)}\n`,
     );
   }
   process.stdout.write("\nrepeated shapes (harvest candidates)\n");

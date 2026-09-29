@@ -53,19 +53,25 @@ export function sequentialFanouts(summaries) {
     .sort((left, right) => right.serializedMs - left.serializedMs);
 }
 
-/** Nodes grouped by key; durationMs is null for a bucket holding any unmeasurable node. */
+/** Nodes grouped by key; Workflow nodes add no durationMs and are counted in untimedCount. */
 function tallyBy(nodes, keyOf) {
   const tally = new Map();
   for (const node of nodes) {
     const key = keyOf(node) ?? "unknown";
-    const bucket = tally.get(key) ?? { key, count: 0, tokens: 0, costUsd: 0, durationMs: 0 };
+    const bucket = tally.get(key) ?? {
+      key,
+      count: 0,
+      untimedCount: 0,
+      tokens: 0,
+      costUsd: 0,
+      durationMs: 0,
+    };
     bucket.count += 1;
     bucket.tokens += node.total_tokens ?? 0;
     // A Workflow's duration runs until the lead saw its notice, which an idle session stretches
     // across days. It is not agent time.
-    const durationMs = node.tool === "Workflow" ? null : nodeDurationMs(node);
-    bucket.durationMs =
-      bucket.durationMs === null || durationMs === null ? null : bucket.durationMs + durationMs;
+    if (node.tool === "Workflow") bucket.untimedCount += 1;
+    else bucket.durationMs += nodeDurationMs(node);
     bucket.costUsd += estimateCost({
       totalTokens: node.total_tokens,
       model: node.resolved_model ?? node.model,
