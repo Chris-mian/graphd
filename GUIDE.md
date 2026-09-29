@@ -24,7 +24,7 @@ your setup was blind to, and acts on two of them:
 > times now come from task notifications, and duplicate rows are collapsed. A third artifact
 > hid the rest: a Workflow was one node, so the six or seven verifiers it ran at once were
 > invisible. With those agents recorded, **15 of 41 multi-agent runs (37%) never overlapped**,
-> average agents at once while any ran is **1.7**, and the last two weeks overlapped in 15 of 16
+> average agents at once while any ran is **1.3**, and the last two weeks overlapped in 15 of 16
 > multi-agent runs. `graph trend` shows it week by week.
 
 It's a local daemon plus hooks. Nothing leaves the machine. It fails open by design — if it breaks,
