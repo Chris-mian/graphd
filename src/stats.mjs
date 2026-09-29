@@ -96,7 +96,8 @@ function tallyBy(nodes, keyOf) {
 export function repeatedSequences(summaries) {
   const byShape = new Map();
   for (const entry of summaries) {
-    if (entry.nodeCount < MULTI_AGENT_THRESHOLD) continue;
+    // A lone Workflow ran several agents but is one step of its own: its script is already saved.
+    if (entry.nodeCount < MULTI_AGENT_THRESHOLD || entry.agentTypes.length < MULTI_AGENT_THRESHOLD) continue;
     const shape = [...new Set(entry.agentTypes)].sort().join(" + ");
     const bucket = byShape.get(shape) ?? { shape, runs: 0, sequentialRuns: 0, serializedMs: 0 };
     bucket.runs += 1;

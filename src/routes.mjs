@@ -225,7 +225,10 @@ export function getRun(store, runIdOrPrefix) {
     run,
     nodes: nodes.map((node) => ({
       ...node,
-      costUsd: estimateCost({ totalTokens: node.total_tokens, model: node.resolved_model ?? node.model }).estimate,
+      // A Workflow's agents are priced on the Workflow, which holds the runtime's total for them.
+      costUsd: node.parent_node_id
+        ? 0
+        : estimateCost({ totalTokens: node.total_tokens, model: node.resolved_model ?? node.model }).estimate,
     })),
     edges: [...declaredEdges, ...observedEdges(ranNodes)],
     diff: topologyDiff({ declaredShape: run.declared_shape, nodes: ranNodes }),
