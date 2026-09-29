@@ -12,16 +12,16 @@ function graphStore() {
   return store;
 }
 
-function addRunWithNode(store, { runId, sessionId, tokens }) {
+function addRunWithNode(store, { runId, sessionId, tokens, startedAt = "2026-09-24T11:00:00Z" }) {
   store
-    .prepare("INSERT INTO runs (id, session_id, started_at) VALUES (?, ?, '2026-09-24T11:00:00Z')")
-    .run(runId, sessionId);
+    .prepare("INSERT INTO runs (id, session_id, started_at) VALUES (?, ?, ?)")
+    .run(runId, sessionId, startedAt);
   store
     .prepare(
       `INSERT INTO nodes (id, run_id, tool, started_at, status, total_tokens)
-       VALUES (?, ?, 'Agent', '2026-09-24T11:00:00Z', 'ok', ?)`,
+       VALUES (?, ?, 'Agent', ?, 'ok', ?)`,
     )
-    .run(`node-${runId}`, runId, tokens);
+    .run(`node-${runId}`, runId, startedAt, tokens);
 }
 
 function picksFile(rows) {
@@ -102,4 +102,45 @@ test("one resolved pick settles a session that also has tied rows", () => {
   const spend = spendByProject(store, picksFile([["s1", "alpha", 0.0], ["s1", "alpha", 1.0]]));
   assert.equal(spend.ambiguousTokens, 0);
   assert.equal(spend.projects[0].slug, "alpha");
+});
+
+test("a zero-confidence candidate is not credited when another project resolved the session", () => {
+  const store = graphStore();
+  addRunWithNode(store, { runId: "r1", sessionId: "s1", tokens: 1000 });
+  const spend = spendByProject(
+    store,
+    picksFile([["s1", "alpha", 0.0], ["s1", "beta", 0.0], ["s1", "gamma", 1.0]]),
+  );
+  assert.deepEqual(spend.projects, [{ slug: "gamma", nodeCount: 1, tokens: 1000, sessionCount: 1 }]);
+});
+
+test("a tied session names the projects spine could not choose between", () => {
+  const store = graphStore();
+  addRunWithNode(store, { runId: "r1", sessionId: "s1", tokens: 1000 });
+  const spend = spendByProject(store, picksFile([["s1", "beta", 0.0], ["s1", "alpha", 0.0]]));
+  assert.deepEqual(spend.ambiguousCandidates, ["alpha", "beta"]);
+});
+
+test("unattributed sessions older than spine's first pick are counted apart", () => {
+  const store = graphStore();
+  addRunWithNode(store, { runId: "r1", sessionId: "old", tokens: 700, startedAt: "2026-08-01T00:00:00Z" });
+  addRunWithNode(store, { runId: "r2", sessionId: "new", tokens: 300, startedAt: "2026-09-25T00:00:00Z" });
+  const spend = spendByProject(store, picksFile([["s9", "alpha"]]));
+  assert.equal(spend.unattributedTokens, 1000);
+  assert.equal(spend.beforeSpineTokens, 700);
+  assert.equal(spend.beforeSpineNodes, 1);
+});
+
+test("a spawn recorded by both the hook and the backfill counts once", () => {
+  const store = graphStore();
+  addRunWithNode(store, { runId: "r1", sessionId: "s1", tokens: 1000 });
+  // The backfill's twin of the hook row: keyed by tool_use id, same run, label, tool and start.
+  store
+    .prepare(
+      `INSERT INTO nodes (id, run_id, tool, started_at, status, total_tokens)
+       VALUES ('toolu_twin', 'r1', 'Agent', '2026-09-24T11:00:00Z', 'ok', NULL)`,
+    )
+    .run();
+  const spend = spendByProject(store, picksFile([["s1", "alpha"]]));
+  assert.equal(spend.projects[0].nodeCount, 1);
 });

@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { dedupeNodes } from "./analysis.mjs";
 
 export const PICKS_DB_PATH =
   process.env.GRAPHD_SPINE_PICKS_PATH ??
@@ -9,6 +10,8 @@ export const PICKS_DB_PATH =
 
 const UNKNOWN_SESSION_ID = "unknown";
 const AMBIGUOUS_CONFIDENCE = 0;
+
+const SPINE_START_SQL = "SELECT MIN(recorded_at) AS firstRecordedAt FROM picks";
 
 const PICKS_SQL = `
   SELECT session_id AS sessionId,
@@ -18,76 +21,122 @@ const PICKS_SQL = `
    WHERE session_id != ?
    GROUP BY session_id, project_slug`;
 
-/**
- * Which projects each session attached to, and whether spine actually resolved one.
- * graphd knows what an agent cost and spine knows what it was for; the session id is the only
- * thing both write. A zero-confidence row means the session was tied between the listed
- * projects, so it is traceable but not attributable. Empty map when spine is not installed.
- */
-export function readSessionProjects(picksPath = PICKS_DB_PATH) {
-  if (!existsSync(picksPath)) return new Map();
+/** Runs a read against spine's picks database; `fallback` when spine is absent or unreadable. */
+function readPicks(picksPath, fallback, read) {
+  if (!existsSync(picksPath)) return fallback;
   let picks;
   try {
     picks = new DatabaseSync(picksPath, { readOnly: true });
   } catch {
-    return new Map();
+    return fallback;
   }
   try {
-    const bySession = new Map();
-    for (const row of picks.prepare(PICKS_SQL).all(UNKNOWN_SESSION_ID)) {
-      const attachment = bySession.get(row.sessionId) ?? { slugs: [], isResolved: false };
-      attachment.slugs.push(row.projectSlug);
-      if (row.confidence > AMBIGUOUS_CONFIDENCE) attachment.isResolved = true;
-      bySession.set(row.sessionId, attachment);
-    }
-    return bySession;
+    return read(picks);
   } catch {
-    return new Map();
+    return fallback;
   } finally {
     picks.close();
   }
 }
 
 /**
+ * Which projects each session attached to, and which of those spine actually resolved.
+ * graphd knows what an agent cost and spine knows what it was for; the session id is the only
+ * thing both write. A zero-confidence row is a candidate spine could not choose between, so it
+ * is traceable but not attributable. Empty map when spine is not installed.
+ */
+export function readSessionProjects(picksPath = PICKS_DB_PATH) {
+  return readPicks(picksPath, new Map(), (picks) => {
+    const bySession = new Map();
+    for (const row of picks.prepare(PICKS_SQL).all(UNKNOWN_SESSION_ID)) {
+      const attachment = bySession.get(row.sessionId) ?? {
+        slugs: [],
+        resolvedSlugs: [],
+        isResolved: false,
+      };
+      attachment.slugs.push(row.projectSlug);
+      if (row.confidence > AMBIGUOUS_CONFIDENCE) {
+        attachment.resolvedSlugs.push(row.projectSlug);
+        attachment.isResolved = true;
+      }
+      bySession.set(row.sessionId, attachment);
+    }
+    return bySession;
+  });
+}
+
+/** When spine recorded its first pick; sessions before then could never have been attributed. */
+export function readSpineStart(picksPath = PICKS_DB_PATH) {
+  return readPicks(picksPath, null, (picks) => picks.prepare(SPINE_START_SQL).get()?.firstRecordedAt ?? null);
+}
+
+/** Tokens and deduplicated node counts per session, with when the session's first run began. */
+function spendBySession(store) {
+  const nodes = store
+    .prepare(
+      `SELECT nodes.*, runs.session_id AS session_id, runs.started_at AS run_started_at
+         FROM nodes JOIN runs ON runs.id = nodes.run_id`,
+    )
+    .all();
+  const bySession = new Map();
+  for (const node of dedupeNodes(nodes)) {
+    const session = bySession.get(node.session_id) ?? {
+      sessionId: node.session_id,
+      firstStartedAt: node.run_started_at,
+      nodeCount: 0,
+      tokens: 0,
+    };
+    session.nodeCount += 1;
+    session.tokens += node.total_tokens ?? 0;
+    if (Date.parse(node.run_started_at) < Date.parse(session.firstStartedAt)) {
+      session.firstStartedAt = node.run_started_at;
+    }
+    bySession.set(node.session_id, session);
+  }
+  return [...bySession.values()];
+}
+
+/**
  * Spend and node counts per project, plus what could not be placed.
- * Three buckets, because they mean different things: a resolved session lands on its project,
- * a tied session is reported as ambiguous rather than split across its candidates, and a
- * session spine never saw is unattributed. A session resolved to two projects counts toward
- * both; the alternative is dropping it, which hides real spend.
+ * A session lands on every project spine resolved it to — counted toward each rather than
+ * dropped — and never on a zero-confidence candidate. A session with no resolved project is
+ * tied; one spine never recorded is unattributed, split by whether it predates spine.
  */
 export function spendByProject(store, picksPath = PICKS_DB_PATH) {
   const bySession = readSessionProjects(picksPath);
-  const rows = store
-    .prepare(
-      `SELECT runs.session_id AS sessionId,
-              COUNT(nodes.id) AS nodeCount,
-              SUM(COALESCE(nodes.total_tokens, 0)) AS tokens
-         FROM nodes JOIN runs ON runs.id = nodes.run_id
-        GROUP BY runs.session_id`,
-    )
-    .all();
+  const spineStartedAt = readSpineStart(picksPath);
 
   const totals = new Map();
+  const ambiguousCandidateCounts = new Map();
   let unattributedNodes = 0;
   let unattributedTokens = 0;
+  let beforeSpineNodes = 0;
+  let beforeSpineTokens = 0;
   let ambiguousNodes = 0;
   let ambiguousTokens = 0;
-  for (const row of rows) {
-    const attachment = bySession.get(row.sessionId);
+  for (const session of spendBySession(store)) {
+    const attachment = bySession.get(session.sessionId);
     if (!attachment || attachment.slugs.length === 0) {
-      unattributedNodes += row.nodeCount;
-      unattributedTokens += row.tokens;
+      unattributedNodes += session.nodeCount;
+      unattributedTokens += session.tokens;
+      if (spineStartedAt === null || Date.parse(session.firstStartedAt) < Date.parse(spineStartedAt)) {
+        beforeSpineNodes += session.nodeCount;
+        beforeSpineTokens += session.tokens;
+      }
       continue;
     }
     if (!attachment.isResolved) {
-      ambiguousNodes += row.nodeCount;
-      ambiguousTokens += row.tokens;
+      ambiguousNodes += session.nodeCount;
+      ambiguousTokens += session.tokens;
+      for (const slug of attachment.slugs) {
+        ambiguousCandidateCounts.set(slug, (ambiguousCandidateCounts.get(slug) ?? 0) + 1);
+      }
       continue;
     }
-    for (const slug of attachment.slugs) {
+    for (const slug of attachment.resolvedSlugs) {
       const totalForSlug = totals.get(slug) ?? { slug, nodeCount: 0, tokens: 0, sessionCount: 0 };
-      totalForSlug.nodeCount += row.nodeCount;
-      totalForSlug.tokens += row.tokens;
+      totalForSlug.nodeCount += session.nodeCount;
+      totalForSlug.tokens += session.tokens;
       totalForSlug.sessionCount += 1;
       totals.set(slug, totalForSlug);
     }
@@ -96,8 +145,14 @@ export function spendByProject(store, picksPath = PICKS_DB_PATH) {
     projects: [...totals.values()].sort((left, right) => right.tokens - left.tokens),
     ambiguousNodes,
     ambiguousTokens,
+    ambiguousCandidates: [...ambiguousCandidateCounts.entries()]
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .map(([slug]) => slug),
     unattributedNodes,
     unattributedTokens,
+    beforeSpineNodes,
+    beforeSpineTokens,
+    spineStartedAt,
     attributedSessions: bySession.size,
   };
 }

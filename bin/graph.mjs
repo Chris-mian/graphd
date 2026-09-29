@@ -150,15 +150,31 @@ function printProjectSpend(projectSpend) {
         `${project.tokens.toLocaleString()} tokens across ${project.sessionCount} session(s)\n`,
     );
   }
-  if (projectSpend.ambiguousNodes > 0) {
+  const writeBucket = (name, nodeCount, tokens, note) => {
+    if (nodeCount === 0) return;
     process.stdout.write(
-      `  ${"(tied)".padEnd(24)} n=${String(projectSpend.ambiguousNodes).padEnd(5)} ` +
-        `${projectSpend.ambiguousTokens.toLocaleString()} tokens — spine saw the session but no project won\n`,
+      `  ${name.padEnd(24)} n=${String(nodeCount).padEnd(5)} ${tokens.toLocaleString()} tokens — ${note}\n`,
     );
-  }
-  process.stdout.write(
-    `  ${"(unattributed)".padEnd(24)} n=${String(projectSpend.unattributedNodes).padEnd(5)} ` +
-      `${projectSpend.unattributedTokens.toLocaleString()} tokens — sessions spine did not record\n`,
+  };
+  writeBucket(
+    "(tied)",
+    projectSpend.ambiguousNodes,
+    projectSpend.ambiguousTokens,
+    `spine could not choose between ${projectSpend.ambiguousCandidates?.join(", ") || "its candidates"}`,
+  );
+  const beforeSpineNodes = projectSpend.beforeSpineNodes ?? 0;
+  const beforeSpineTokens = projectSpend.beforeSpineTokens ?? 0;
+  writeBucket(
+    "(before spine)",
+    beforeSpineNodes,
+    beforeSpineTokens,
+    `sessions older than spine's first pick (${projectSpend.spineStartedAt?.slice(0, 10) ?? "spine not installed"})`,
+  );
+  writeBucket(
+    "(no project)",
+    projectSpend.unattributedNodes - beforeSpineNodes,
+    projectSpend.unattributedTokens - beforeSpineTokens,
+    "spine ran but no registered project matched the session",
   );
 }
 
