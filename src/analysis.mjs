@@ -149,6 +149,8 @@ function isSameSpawn(left, right) {
   // agents dispatched in the same assistant message — which share a label AND an identical
   // transcript timestamp, so the time tolerance never separates them — collapse into one.
   if (isBackfillRow(left) === isBackfillRow(right)) return false;
+  // An agent a Workflow ran is written only by the importer, so it has no twin.
+  if (left.parent_node_id || right.parent_node_id) return false;
   if (left.run_id !== right.run_id) return false;
   if ((left.label ?? null) !== (right.label ?? null)) return false;
   if (left.tool !== right.tool) return false;

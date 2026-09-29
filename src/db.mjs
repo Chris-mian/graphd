@@ -271,9 +271,10 @@ export function countRecentAgentNodes(store, runId, windowMinutes) {
       // julianday on both sides: started_at is ISO-with-T, datetime('now') is space-separated,
       // so a string comparison between them is always true and the window silently does nothing.
       // Backfill rows are excluded: they are transcript twins of spawns the hook already
-      // counted, and including them trips the gate at half the configured threshold.
+      // counted, and including them trips the gate at half the configured threshold. Agents a
+      // Workflow ran are excluded too: a workflow script is itself a declared topology.
       `SELECT COUNT(*) AS agentNodeCount FROM nodes
-        WHERE run_id = ? AND tool = 'Agent'
+        WHERE run_id = ? AND tool = 'Agent' AND parent_node_id IS NULL
           AND id NOT LIKE 'toolu\\_%' ESCAPE '\\'
           AND julianday(started_at) >= julianday('now', ?)`,
     )

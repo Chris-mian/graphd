@@ -10,6 +10,7 @@ import {
   pruneSupersededHookNodes,
   recordTaskCompletion,
 } from "../src/db.mjs";
+import { readWorkflowChildren, unionMs } from "../src/workflowchildren.mjs";
 import { parseTaskNotifications } from "../src/tasknotify.mjs";
 import {
   INTERVENTION_KINDS,
@@ -285,6 +286,51 @@ function insertSpawn(store, spawn, completion) {
     );
 }
 
+/**
+ * One node per agent a Workflow ran, parented to the Workflow node. Children carry timing only:
+ * the Workflow node keeps the runtime's token total, so spend is not counted twice. The parent's
+ * duration becomes the union of its children's active spans. Returns the child count.
+ */
+function insertWorkflowChildren(store, { spawn, transcriptDir, workflowRunId }) {
+  const children = readWorkflowChildren(transcriptDir);
+  if (children.length === 0) return 0;
+  const runKey = workflowRunId ?? spawn.toolUseId;
+  const upsert = store.prepare(
+    `INSERT INTO nodes
+       (id, run_id, parent_node_id, tool, agent_type, label, model, started_at, ended_at, status,
+        duration_ms, true_duration_ms, agent_id, is_async)
+     VALUES (?, ?, ?, 'Agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+     ON CONFLICT (id) DO UPDATE SET
+       agent_type       = excluded.agent_type,
+       label            = excluded.label,
+       model            = excluded.model,
+       ended_at         = excluded.ended_at,
+       status           = excluded.status,
+       duration_ms      = excluded.duration_ms,
+       true_duration_ms = excluded.true_duration_ms`,
+  );
+  for (const child of children) {
+    upsert.run(
+      `wf:${runKey}:${child.agentId}`,
+      spawn.sessionId,
+      spawn.toolUseId,
+      child.agentType,
+      child.label,
+      child.model,
+      child.startedAt,
+      child.endedAt,
+      child.isFinished ? "ok" : "running",
+      Date.parse(child.endedAt) - Date.parse(child.startedAt),
+      child.activeMs,
+      child.agentId,
+    );
+  }
+  store
+    .prepare("UPDATE nodes SET true_duration_ms = ? WHERE id = ?")
+    .run(unionMs(children.flatMap((child) => child.segments)), spawn.toolUseId);
+  return children.length;
+}
+
 function upsertSession(store, session) {
   store
     .prepare(
@@ -334,6 +380,9 @@ let skippedScratch = 0;
 // Resumptions resolve their target against `nodes`, so they are applied after every transcript
 // has contributed its spawns; a message can otherwise arrive before the node it points at.
 const pendingResumptions = [];
+// Workflow children are applied after every notification, so a parent's duration from its
+// children is not overwritten by the runtime's own figure, which counts suspended time.
+const workflowParents = new Map();
 
 store.exec("BEGIN");
 for (const path of transcriptPaths()) {
@@ -356,8 +405,17 @@ for (const path of transcriptPaths()) {
   for (const spawn of spawns) {
     if (!spawn.sessionId || !spawn.startedAt) continue;
     if (Date.parse(spawn.startedAt) < cutoffMs) continue;
-    insertSpawn(store, spawn, resultsByToolUseId.get(spawn.toolUseId));
+    const completion = resultsByToolUseId.get(spawn.toolUseId);
+    insertSpawn(store, spawn, completion);
     importedNodes += 1;
+    const transcriptDir = completion?.result?.transcriptDir;
+    if (spawn.tool === "Workflow" && transcriptDir) {
+      workflowParents.set(spawn.toolUseId, {
+        spawn,
+        transcriptDir,
+        workflowRunId: completion.result.runId ?? null,
+      });
+    }
   }
   for (const resumption of resumptions) {
     if (!resumption.id || !resumption.runId || !resumption.ts) continue;
@@ -377,6 +435,11 @@ for (const path of transcriptPaths()) {
   }
 }
 
+let importedWorkflowAgents = 0;
+for (const parent of workflowParents.values()) {
+  importedWorkflowAgents += insertWorkflowChildren(store, parent);
+}
+
 let importedResumptions = 0;
 let resolvedResumptions = 0;
 for (const resumption of pendingResumptions) {
@@ -390,7 +453,8 @@ store.exec("COMMIT");
 
 process.stdout.write(
   `scanned ${scannedTranscripts} transcripts (${skippedScratch} scratch skipped), ` +
-    `imported ${importedNodes} agent nodes, ${importedInterventions} interventions, ` +
+    `imported ${importedNodes} agent nodes (+${importedWorkflowAgents} inside workflows), ` +
+    `${importedInterventions} interventions, ` +
     `${importedResumptions} resumptions (${resolvedResumptions} resolved to a node), ` +
     `reconciled ${reconciledCompletions} async completions, ` +
     `pruned ${prunedHookNodes} superseded hook nodes\n`,

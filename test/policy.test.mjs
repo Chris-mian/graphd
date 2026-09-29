@@ -156,3 +156,20 @@ test("a topology with no edges and no nodes is rejected", () => {
   assert.equal(isTopologySubstantive({}), false);
   assert.equal(isTopologySubstantive(null), false);
 });
+
+test("agents a Workflow ran do not count toward the gate", () => {
+  const store = freshStore();
+  spawnAgents(store, THRESHOLD - 1);
+  for (let index = 0; index < THRESHOLD + 3; index += 1) {
+    store
+      .prepare(
+        `INSERT INTO nodes (id, run_id, parent_node_id, tool, started_at, status)
+         VALUES (?, ?, 'toolu_workflow', 'Agent', datetime('now'), 'ok')`,
+      )
+      .run(`wf:wf_run:agent-${index}`, RUN_ID);
+  }
+  assert.equal(
+    evaluateSpawn(store, ENFORCING_CONFIG, { runId: RUN_ID, tool: "Agent" }).wouldDeny,
+    false,
+  );
+});
