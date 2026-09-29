@@ -267,8 +267,9 @@ whatever CLI version is installed and fails the whole run with a 400 when it doe
 - A Workflow's spend is the runtime's `subagent_tokens` total, and is not cross-checked against its
   agents' own usage. Its agents carry timing only.
 - A Workflow agent's active time is a heuristic: a pause over five minutes with no tool call open
-  counts as idle. Its `ended_at` is still its last entry, so an agent suspended mid-run spans the
-  suspension in peak-concurrency reads.
+  counts as idle. Its active segments are stored, and peak concurrency and average agents at once
+  read those, so an agent suspended mid-run does not count the suspension. Its `ended_at` is still
+  its last entry, which is what timing-derived edges and the timeline use.
 - Spend is a floor. Token counts arrive as one total per node with no input/output split, so
   `graph stats` prices at an assumed 90% input share and prints the all-input/all-output bounds
   beside the estimate.
