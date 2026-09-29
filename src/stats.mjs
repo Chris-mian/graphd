@@ -15,7 +15,8 @@ import { estimateCost } from "./pricing.mjs";
 const MULTI_AGENT_THRESHOLD = 2;
 const TOP_LIST_LENGTH = 8;
 
-function selectRunsWithNodes(store) {
+/** Every run that recorded a node, with its deduplicated nodes. */
+export function selectRunsWithNodes(store) {
   const nodesByRun = new Map();
   for (const node of dedupeNodes(store.prepare("SELECT * FROM nodes ORDER BY started_at").all())) {
     if (!nodesByRun.has(node.run_id)) nodesByRun.set(node.run_id, []);
@@ -29,7 +30,7 @@ function selectRunsWithNodes(store) {
 }
 
 /** One run's shape from the agents that ran, and its spend from the nodes that carry tokens. */
-function summarizeRun({ run, nodes }) {
+export function summarizeRun({ run, nodes }) {
   const ranNodes = shapeNodes(nodes);
   const spentNodes = spendNodes(nodes);
   const totalTokens = spentNodes.reduce((sum, node) => sum + (node.total_tokens ?? 0), 0);
@@ -41,6 +42,7 @@ function summarizeRun({ run, nodes }) {
     runId: run.id,
     cwd: run.cwd,
     startedAt: run.started_at,
+    declaredShape: run.declared_shape ?? null,
     nodeCount: ranNodes.length,
     peak: peakConcurrency(ranNodes),
     serializedMs: serializationCostMs(ranNodes),

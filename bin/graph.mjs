@@ -15,6 +15,7 @@ const USAGE = `graph — inspect graphd
   graph promote <id>      register a candidate as a by-name workflow
   graph reject <id>       move a candidate out of the registry (reversible)
   graph stats             shape, serialized agent-time, and token spend across all runs
+  graph trend             per week: runs that ran in parallel, avg concurrency, serialized time, spend
   graph lessons           human interventions, self-corrections, autonomy trend
   graph accept <rule>     accept a harvested lesson; every agent reads it from then on
   graph rules             accepted lessons currently injected into agent prompts
@@ -207,6 +208,23 @@ function printStats(stats) {
   }
 }
 
+/** One row per week; parallel is "ran in parallel / used 2+ agents". */
+function printTrend(weeks) {
+  process.stdout.write("week       runs  parallel  avg-conc  serialized  declared  spend    human/session\n");
+  for (const week of weeks) {
+    const perSession = week.humanInterventionsPerSession;
+    process.stdout.write(
+      `${week.week.padEnd(9)}  ${String(week.runs).padStart(4)}  ` +
+        `${`${week.parallelRuns}/${week.multiAgentRuns}`.padStart(8)}  ` +
+        `${(week.averageConcurrency == null ? "-" : week.averageConcurrency.toFixed(2)).padStart(8)}  ` +
+        `${formatMinutes(week.serializedMs).padStart(10)}  ` +
+        `${`${week.declaredRuns}/${week.multiAgentRuns}`.padStart(8)}  ` +
+        `${formatUsd(week.costUsd).padStart(7)}  ` +
+        `${perSession == null ? "-" : perSession.toFixed(2)}\n`,
+    );
+  }
+}
+
 function printLessons(lessons) {
   const byKind = Object.fromEntries(lessons.counts.map((row) => [row.kind, row.count]));
   process.stdout.write(
@@ -363,6 +381,9 @@ try {
       break;
     case "stats":
       printStats((await callDaemon("/v1/stats")).stats);
+      break;
+    case "trend":
+      printTrend((await callDaemon("/v1/trend")).weeks);
       break;
     case "lessons":
       printLessons((await callDaemon("/v1/lessons")).lessons);
