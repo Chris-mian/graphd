@@ -52,7 +52,9 @@ CREATE TABLE IF NOT EXISTS nodes (
   notified_at    TEXT,
   true_duration_ms INTEGER,
   prompt_text    TEXT,
-  result_text    TEXT
+  result_text    TEXT,
+  -- JSON [[startMs, endMs], ...]: when a Workflow's agent was working, gaps of idle time removed.
+  active_segments TEXT
 );
 
 CREATE INDEX IF NOT EXISTS nodes_run_idx ON nodes (run_id, started_at);

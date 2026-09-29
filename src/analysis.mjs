@@ -20,6 +20,22 @@ export function hasKnownEnd(node) {
   return Boolean(node.notified_at) || (!node.is_async && Boolean(node.started_at));
 }
 
+/**
+ * The spans a node was working. A Workflow's agent carries its own active segments, so a session
+ * suspended mid-agent does not count the suspension as work; any other node is start to end.
+ */
+function workingSpans(node, nowMs) {
+  if (node.active_segments) {
+    try {
+      const segments = JSON.parse(node.active_segments);
+      if (Array.isArray(segments) && segments.length > 0) return segments;
+    } catch {
+      // A malformed value falls back to the start-to-end span.
+    }
+  }
+  return [[Date.parse(node.started_at), nodeEndMs(node, nowMs)]];
+}
+
 /** Only nodes that can honestly be placed on a timeline. */
 function measurableNodes(nodes) {
   return nodes.filter((node) => node.started_at && hasKnownEnd(node));
@@ -85,7 +101,7 @@ export function spendNodes(nodes) {
  * excluded, so a long session with one burst of fan-out still reads as parallel.
  */
 export function concurrencyTotals(nodes, nowMs = Date.now()) {
-  const spans = measurableNodes(nodes).map((node) => [Date.parse(node.started_at), nodeEndMs(node, nowMs)]);
+  const spans = measurableNodes(nodes).flatMap((node) => workingSpans(node, nowMs));
   const agentMs = spans.reduce((sum, [start, end]) => sum + Math.max(end - start, 0), 0);
   const busyMs = unionMs(spans);
   return { agentMs, busyMs };
@@ -104,9 +120,9 @@ export function averageConcurrency(nodes, nowMs = Date.now()) {
  */
 export function peakConcurrency(nodes, nowMs = Date.now()) {
   const boundaries = [];
-  for (const node of measurableNodes(nodes)) {
-    boundaries.push({ at: Date.parse(node.started_at), delta: 1 });
-    boundaries.push({ at: nodeEndMs(node, nowMs), delta: -1 });
+  for (const [startMs, endMs] of measurableNodes(nodes).flatMap((node) => workingSpans(node, nowMs))) {
+    boundaries.push({ at: startMs, delta: 1 });
+    boundaries.push({ at: endMs, delta: -1 });
   }
   boundaries.sort((left, right) => left.at - right.at || right.delta - left.delta);
 

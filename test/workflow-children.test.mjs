@@ -5,11 +5,14 @@ import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { openStore, recordTaskCompletion } from "../src/db.mjs";
 import { activeSegments, MAX_ACTIVE_GAP_MS, MAX_TOOL_CALL_MS, readWorkflowChildren, unionMs } from "../src/workflowchildren.mjs";
 
 const IMPORTER_PATH = join(import.meta.dirname, "..", "bin", "graph-import.mjs");
 const SESSION_ID = "22222222-3333-4444-5555-666666666666";
 const FORK_SESSION_ID = "99999999-3333-4444-5555-666666666666";
+// Sorts before SESSION_ID, so a fork read first cannot win by being read first.
+const EARLY_FORK_SESSION_ID = "00000000-3333-4444-5555-666666666666";
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 const START_MS = Date.parse("2026-09-25T10:00:00.000Z");
@@ -76,12 +79,35 @@ test("each agent in a workflow directory is read with its type, timing and finis
   assert.equal(byId.a1.isFinished, true);
 });
 
+test("an agent waiting on its own tool call is working, even when a notice is filed out of order", () => {
+  const dir = join(mkdtempSync(join(tmpdir(), "graphd-wf-tools-")), "wf_tools");
+  mkdirSync(dir);
+  const at = (minutes) => iso(minutes * MINUTE_MS);
+  const entries = [
+    { type: "assistant", timestamp: at(0), message: { content: [{ type: "tool_use", id: "t1", name: "Bash" }] } },
+    { type: "user", timestamp: at(12), message: { content: [{ type: "tool_result", tool_use_id: "t1" }] } },
+    // Arrived at minute 3, mid-call, but the runtime files it after the result.
+    { type: "attachment", timestamp: at(3) },
+    { type: "assistant", timestamp: at(13), message: { content: [{ type: "text", text: "ok" }] } },
+    // Seven idle minutes with nothing open: a real pause.
+    { type: "assistant", timestamp: at(20), message: { content: [{ type: "tool_use", id: "t2" }, { type: "tool_use", id: "t3" }] } },
+    { type: "user", timestamp: at(21), message: { content: [{ type: "tool_result", tool_use_id: "t2" }] } },
+    // t3 is still open across these fourteen minutes.
+    { type: "user", timestamp: at(35), message: { content: [{ type: "tool_result", tool_use_id: "t3" }] } },
+  ];
+  writeFileSync(join(dir, "agent-x.meta.json"), JSON.stringify({ agentType: "general-purpose" }));
+  writeFileSync(join(dir, "agent-x.jsonl"), entries.map((entry) => JSON.stringify(entry)).join("\n"));
+  const [child] = readWorkflowChildren(dir);
+  assert.deepEqual(child.segments.map(([start, end]) => [(start - START_MS) / MINUTE_MS, (end - START_MS) / MINUTE_MS]), [[0, 13], [20, 35]]);
+  assert.equal(child.activeMs, 28 * MINUTE_MS);
+});
+
 test("a missing workflow directory yields no children", () => {
   assert.deepEqual(readWorkflowChildren(join(tmpdir(), "graphd-no-such-wf")), []);
 });
 
 /** A home dir whose lead transcript launched the fixture Workflow, optionally with its notification. */
-function homeWithWorkflow({ notified = false, forked = false } = {}) {
+function homeWithWorkflow({ notified = false, forkSessionId = null } = {}) {
   const home = mkdtempSync(join(tmpdir(), "graphd-wf-import-"));
   const stateDir = join(home, "state");
   const projectDir = join(home, ".claude", "projects", "-work-repo");
@@ -113,12 +139,13 @@ function homeWithWorkflow({ notified = false, forked = false } = {}) {
     return entries.map((entry) => JSON.stringify(entry)).join("\n");
   };
   writeFileSync(join(projectDir, `${SESSION_ID}.jsonl`), entriesFor(SESSION_ID));
-  if (forked) writeFileSync(join(projectDir, `${FORK_SESSION_ID}.jsonl`), entriesFor(FORK_SESSION_ID));
-  return { home, stateDir, transcriptDir };
+  if (forkSessionId) writeFileSync(join(projectDir, `${forkSessionId}.jsonl`), entriesFor(forkSessionId));
+  const addFork = (sessionId) => writeFileSync(join(projectDir, `${sessionId}.jsonl`), entriesFor(sessionId));
+  return { home, stateDir, transcriptDir, addFork };
 }
 
-function runImporter({ home, stateDir }) {
-  const imported = spawnSync(process.execPath, [IMPORTER_PATH], {
+function runImporter({ home, stateDir }, days = null) {
+  const imported = spawnSync(process.execPath, days === null ? [IMPORTER_PATH] : [IMPORTER_PATH, String(days)], {
     env: { ...process.env, HOME: home, GRAPHD_STATE_DIR: stateDir },
     encoding: "utf8",
   });
@@ -172,8 +199,55 @@ test("a later import moves an agent that has since finished", () => {
   assert.equal(parent.true_duration_ms, 6 * MINUTE_MS);
 });
 
+test("a notification recorded later, as the hook does, keeps the workflow's active time", () => {
+  const fixture = homeWithWorkflow();
+  runImporter(fixture);
+  const store = openStore(join(fixture.stateDir, "graph.db"));
+  const changed = recordTaskCompletion(store, {
+    taskId: "wtask",
+    toolUseId: "toolu_wf",
+    notifiedAt: iso(DAY_MS),
+    usage: { durationMs: DAY_MS, totalTokens: 1234 },
+  });
+  store.close();
+  assert.equal(changed, 1);
+  const { parent } = readNodes(fixture);
+  assert.equal(parent.true_duration_ms, 4 * MINUTE_MS);
+  assert.equal(parent.total_tokens, 1234);
+  assert.equal(parent.notified_at, iso(DAY_MS));
+});
+
+test("a Workflow past the import window is read again only while one of its agents is open", () => {
+  const fixture = homeWithWorkflow();
+  runImporter(fixture);
+  // The spawn is days old, so a one-day import skips it, but a3 is still open.
+  appendFileSync(join(fixture.transcriptDir, "journal.jsonl"), "\n" + JSON.stringify({ type: "result", agentId: "a3" }));
+  runImporter(fixture, 1);
+  assert.equal(readNodes(fixture).byAgent.a3.status, "ok");
+  // Every agent is finished now, so a later change to the directory is not read.
+  const before = readNodes(fixture).byAgent.a1.ended_at;
+  appendFileSync(join(fixture.transcriptDir, "agent-a1.jsonl"), "\n" + JSON.stringify({ timestamp: iso(30 * MINUTE_MS) }));
+  runImporter(fixture, 1);
+  assert.equal(readNodes(fixture).byAgent.a1.ended_at, before);
+});
+
+test("a re-import moves agents filed under a fork back to their parent's run", () => {
+  const fixture = homeWithWorkflow();
+  runImporter(fixture);
+  fixture.addFork(EARLY_FORK_SESSION_ID);
+  runImporter(fixture);
+  // What the old importer left behind: agents filed under the fork read last.
+  const writer = new DatabaseSync(join(fixture.stateDir, "graph.db"));
+  writer.prepare("UPDATE nodes SET run_id = ? WHERE parent_node_id = 'toolu_wf'").run(EARLY_FORK_SESSION_ID);
+  writer.close();
+  runImporter(fixture);
+  const { children, parent } = readNodes(fixture);
+  assert.equal(parent.run_id, SESSION_ID);
+  assert.ok(children.every((child) => child.run_id === SESSION_ID));
+});
+
 test("a forked session repeating the workflow leaves its agents in the parent's run", () => {
-  const fixture = homeWithWorkflow({ forked: true });
+  const fixture = homeWithWorkflow({ forkSessionId: FORK_SESSION_ID });
   runImporter(fixture);
   const { children, parent } = readNodes(fixture);
   assert.equal(children.length, 3);

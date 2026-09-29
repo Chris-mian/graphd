@@ -55,19 +55,27 @@ export function activeSegments(points, maxGapMs = MAX_ACTIVE_GAP_MS) {
   return segments;
 }
 
-/** Each entry's time, and whether a tool call it or an earlier entry started is still unanswered. */
+/**
+ * Each entry's time, and whether a tool call it or an earlier entry started is still unanswered.
+ * Walked in time order, not file order: a notification that arrived during a tool call is written
+ * after the call's result but stamped with its arrival time.
+ */
 function activityPoints(entries) {
   const openToolUseIds = new Set();
   const points = [];
-  for (const entry of entries) {
+  const timed = entries
+    .map((entry) => ({ entry, at: Date.parse(entry.timestamp) }))
+    .filter(({ at }) => Number.isFinite(at))
+    .sort((left, right) => left.at - right.at);
+  for (const { entry, at } of timed) {
     const blocks = Array.isArray(entry.message?.content) ? entry.message.content : [];
     for (const block of blocks) {
       if (block?.type === "tool_use" && block.id) openToolUseIds.add(block.id);
       if (block?.type === "tool_result" && block.tool_use_id) openToolUseIds.delete(block.tool_use_id);
     }
-    points.push({ at: Date.parse(entry.timestamp), toolInFlight: openToolUseIds.size > 0 });
+    points.push({ at, toolInFlight: openToolUseIds.size > 0 });
   }
-  return points.filter((point) => Number.isFinite(point.at));
+  return points;
 }
 
 /**

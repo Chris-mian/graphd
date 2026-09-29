@@ -19,6 +19,7 @@ const NODE_RESULT_COLUMNS = [
   ["true_duration_ms", "INTEGER"],
   ["prompt_text", "TEXT"],
   ["result_text", "TEXT"],
+  ["active_segments", "TEXT"],
 ];
 
 const SESSION_COLUMNS = [["turn_count", "INTEGER NOT NULL DEFAULT 0"]];

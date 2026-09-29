@@ -301,8 +301,8 @@ function insertWorkflowChildren(store, { spawn, transcriptDir, workflowRunId }) 
   const upsert = store.prepare(
     `INSERT INTO nodes
        (id, run_id, parent_node_id, tool, agent_type, label, model, started_at, ended_at, status,
-        duration_ms, true_duration_ms, agent_id, is_async)
-     VALUES (?, ?, ?, 'Agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        duration_ms, true_duration_ms, agent_id, is_async, active_segments)
+     VALUES (?, ?, ?, 'Agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
      ON CONFLICT (id) DO UPDATE SET
        run_id           = excluded.run_id,
        parent_node_id   = excluded.parent_node_id,
@@ -312,7 +312,8 @@ function insertWorkflowChildren(store, { spawn, transcriptDir, workflowRunId }) 
        ended_at         = excluded.ended_at,
        status           = excluded.status,
        duration_ms      = excluded.duration_ms,
-       true_duration_ms = excluded.true_duration_ms`,
+       true_duration_ms = excluded.true_duration_ms,
+       active_segments  = excluded.active_segments`,
   );
   for (const child of children) {
     upsert.run(
@@ -328,6 +329,7 @@ function insertWorkflowChildren(store, { spawn, transcriptDir, workflowRunId }) 
       Date.parse(child.endedAt) - Date.parse(child.startedAt),
       child.activeMs,
       child.agentId,
+      JSON.stringify(child.segments),
     );
   }
   store
