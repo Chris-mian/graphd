@@ -21,10 +21,11 @@ your setup was blind to, and acts on two of them:
 > call in ~130ms and then work for minutes, so every fan-out was recorded as a row of instant,
 > non-overlapping nodes. On top of that each spawn was stored twice — once by the live hook, once
 > by the transcript backfill — which turned solo spawns into pairs. Both are fixed: true finish
-> times now come from task notifications, and duplicate rows are collapsed. The honest numbers
-> are **58% of multi-agent runs never overlapped**, and **every fan-out (18 of 18) did run in
-> parallel**. Every async node now has an observed finish time, so nothing is excluded. The
-> remaining question is not "does parallelism work" but "why do 58% of runs never attempt it".
+> times now come from task notifications, and duplicate rows are collapsed. A third artifact
+> hid the rest: a Workflow was one node, so the six or seven verifiers it ran at once were
+> invisible. With those agents recorded, **15 of 41 multi-agent runs (37%) never overlapped**,
+> average agents at once while any ran is **1.7**, and the last two weeks overlapped in 15 of 16
+> multi-agent runs. `graph trend` shows it week by week.
 
 It's a local daemon plus hooks. Nothing leaves the machine. It fails open by design — if it breaks,
 your sessions carry on as if it were never installed.
@@ -37,6 +38,7 @@ your sessions carry on as if it were never installed.
 
 ```bash
 graph stats          # shape, serialized agent-time, spend by agent type and model
+graph trend          # per week: overlap, agents at once, serialized time, spend, interventions
 graph decisions      # proposals waiting on your accept/reject
 graph decide <id> accepted|rejected
 graph lessons        # interventions, autonomy trend, where autonomy broke
@@ -134,6 +136,8 @@ tokens, which is why it only started after you accepted it — and it still appl
 - **what crossed** — click any node to see the prompt sent down and the result that came back
 - **the decisions** — declared topology with the artifact on each edge, every gate firing, and
   every time you stepped in
+- **inside each Workflow** — the agents it ran, nested under it, with their own bars
+- **what it cost** — estimated dollars per node
 - **honest gaps** — a background agent with no task notification is marked `end unknown` and
   excluded from the verdict rather than counted as parallel
 
@@ -145,7 +149,7 @@ tokens, which is why it only started after you accepted it — and it still appl
 the *cheap* tier for verifiers; `graph stats` showed it at $10/$50 per MTok, 2× opus, and both
 your pressure-testers were on it. The second was worse: the parallelism metric was reading the
 handoff time of background agents instead of their run time, and counting every spawn twice. It
-reported 82% never-parallel. The real figure is 58%, and fan-outs succeed 18 times out of 18.
+reported 82% never-parallel. With both fixed, and Workflow agents counted, it is 37%.
 Prose review caught neither; querying real rows caught both.
 
 **The workflow caught my correction being wrong too.** The first real `implement-verify` run —
@@ -201,7 +205,8 @@ Then run `/lesson-harvest` in a session. It writes a report to
 graph accept "Never attribute a test failure to flakiness without re-running it in isolation."
 ```
 
-**The number to watch is interventions per session.** Currently ~1.5, flat since W33. That's the
+**The number to watch is interventions per session**, the last column of `graph trend` (W38 0.09,
+W39 0.44). That's the
 autonomy metric — how often a run needed you. A harvest that doesn't plausibly lower it did nothing.
 
 ### When you have parallel work
@@ -215,7 +220,7 @@ coordinating in-thread, because coordination in code costs zero model tokens.
 
 ### The UI
 
-`http://127.0.0.1:8787/` — run list with verdicts, a timeline where a fan-out reads as overlapping
+`http://127.0.0.1:8787/` — efficiency by week, run list with verdicts, a timeline where a fan-out reads as overlapping
 bars and a chain reads as a staircase, workflow library with promote/reject buttons, health, policy
 checks, invocation log. Enforcement and pause toggle from the header. Light and dark both validated.
 
@@ -227,15 +232,17 @@ tunnel path itself is untested.
 
 ## Limits — read this before trusting a number
 
-- **Spend is a floor, not a bill.** Only 34 of 179 recorded agents carry token counts; older
+- **Spend is a floor, not a bill.** 194 of 324 recorded agents carry token counts; older
   transcripts predate the field. Cost is estimated from published rates with an assumed 90% input
   split, not billed.
 - **Interventions per session is a floor too.** Every time you shrugged and fixed something
   yourself, there's no transcript signal. Invisible by construction.
-- **Observed edges are timing-derived, not real dependencies.** The harness exposes no parent id, so
-  "B waited on A" means "A had finished when B started". Good enough to separate a chain from a
-  fan-out; not a true dependency graph.
-- **`implement-verify` has run once**, in `verify-only` mode. Parallel-implement mode is still
+- **Observed edges are timing-derived, not real dependencies.** Only a Workflow's own agents
+  are linked to their parent; elsewhere "B waited on A" means "A had finished when B started".
+  Good enough to separate a chain from a fan-out; not a true dependency graph.
+- **Workflow agents' time is active time, estimated.** Pauses over five minutes with no tool call
+  open are dropped as idle. The Workflow's spend is the runtime's total, not a sum of its agents.
+- **`implement-verify` runs in `verify-only` mode.** Parallel-implement mode is still
   unexercised and stays off unless asked for by name.
 - **Unmeasurable nodes are excluded, never assumed.** An async node with no notification makes
   `observedShape` return `unknown` and `isMismatch` null rather than guessing. Currently 0 of 57.
@@ -251,7 +258,6 @@ tunnel path itself is untested.
 
 1. **Nothing is blocked.** `implement-verify` has run (8 agents, 26 findings, 3 real bugs fixed)
    and fires automatically: eng-task Phase 5 instructs the call, which is itself the opt-in.
-2. **Find out why 58% of multi-agent runs never attempt a fan-out.** Parallelism works when
+2. **Find out why 37% of multi-agent runs never attempt a fan-out.** Parallelism works when
    tried; the gap is in the deciding, not the executing. That is a question for the next harvest.
-3. **Per-node cost in the UI** — the data is there, the run detail doesn't show dollars yet.
-4. **The UI is functional, not good.** Known, deprioritized at your call.
+3. **The UI is functional, not good.** Known, deprioritized at your call.

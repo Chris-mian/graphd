@@ -24,6 +24,7 @@ graph runs [limit]      recent runs, declared shape vs what ran
 graph show <run-id>     nodes, edges, declared/observed diff
 graph checks [limit]    policy evaluations, including shadow would-denies
 graph stats             shape, serialized agent-time, spend, harvest candidates
+graph trend             per week: runs that overlapped, agents at once, serialized time, spend
 graph eval              what the intervention record can and cannot prove
 graph library           saved workflows and candidates
 graph doctor            configuration health
@@ -108,6 +109,7 @@ The token is the only credential; anything holding it can flip enforcement. Rota
 GET  /v1/health
 GET  /v1/runs?limit=
 GET  /v1/runs/<run-id>
+GET  /v1/trend
 GET  /v1/policy/checks?limit=
 POST /v1/events           {kind: node_spawn|node_end|topology|resumption, ...}
 POST /v1/policy/check     {sessionId, tool} -> {isAllowed, wouldDeny, rule, reason}
@@ -120,10 +122,13 @@ POST /v1/topology         {sessionId, topology}
 it needs the token, which the page prompts for once and keeps in `localStorage`. Pass it inline
 with `?token=…` when opening from a script.
 
-Four panels: run list with declared-vs-ran verdicts, a timeline where a fan-out reads as
+An efficiency-by-week panel on top (the same numbers as `graph trend`), then a run list with
+declared-vs-ran verdicts, a timeline where a fan-out reads as
 overlapping bars and a chain reads as a staircase, policy checks including shadow would-denies,
 and the invocation log. Enforcement and pause are togglable from the header, so a tunnel gives
-remote control and not just a remote view.
+remote control and not just a remote view. In a run's detail, the agents a Workflow ran are listed
+under it in both the table and the timeline, and every node shows its estimated cost; a
+Workflow's agents read "on Workflow" because their spend is carried by the Workflow row.
 
 Light and dark are both selected palettes, validated with the dataviz palette checker (status
 hues carry an icon and label so color never signals alone).
@@ -144,6 +149,20 @@ agent spawns, results, durations, tokens, and resolved models — so analysis do
 for new traffic. It also walks each session's `subagents/` directory, which is where an agent's
 own spawns and messages are recorded. Re-running is safe; nodes are keyed by tool_use id.
 
+A `Workflow` is one tool call, but it runs several agents. The importer reads the run's own
+directory (`subagents/workflows/wf_<id>/`) and records each agent as a child node with
+`parent_node_id` set to the Workflow: type, label and model from its meta file, timing from its
+transcript, and `running` until the journal records its result. A child's duration is its active
+time. A gap of more than five minutes between entries is dropped as idle, unless the agent's own
+tool call was still open, which counts as work for up to 30 minutes. The Workflow's duration
+becomes the union of its children's active time, rather than the runtime's figure, which counts
+the days a session sat suspended.
+
+Every view then takes one of two cuts. For *shape* (peak concurrency, serialized time, observed
+shape, batches, average agents at once), a Workflow with children is replaced by its children.
+For *spend* (tokens, cost, agent types, projects), the children are dropped, because the
+Workflow row already holds the runtime's token total for the whole run.
+
 `graph stats` also breaks spend down by project, joining spine's `picks` table on the session id
 — graphd knows what an agent cost and spine knows what it was for, and that id is the only thing
 both write. A session counts toward every project spine resolved it to (confidence above zero),
@@ -156,7 +175,8 @@ first, as in the rest of `graph stats`.
 
 `graph stats` reports, across every run: how many multi-agent runs never had two agents running at
 once, serialized agent-time (total node duration minus the slowest node, counted only when nothing
-overlapped, so human thinking time is excluded), token spend per agent type and model, and repeated
+overlapped, so human thinking time is excluded), average agents at once (summed agent time over
+time with at least one agent running), token spend per agent type and model, and repeated
 agent-type shapes that are harvest candidates.
 
 Cost is an estimate. Agent results report one combined `totalTokens`, so `src/pricing.mjs` splits it
@@ -242,10 +262,13 @@ whatever CLI version is installed and fails the whole run with a 400 when it doe
 - Observed edges are derived from timing, not from a parent/child link: B's predecessor is the
   last node that had finished when B started. Nodes that overlap something get no incoming edge,
   which is deliberate — it is what makes a real fan-out visibly edgeless, and `delegationBatches`
-  reads that shape. `parent_node_id` is still unpopulated, but no longer for want of a join:
-  sub-agent transcripts under `<session>/subagents/` carry `agentId` and `isSidechain: true`,
-  which does tie an agent's own turns to the node that spawned it. Deriving parentage from that
-  is unbuilt, not blocked.
+  reads that shape. `parent_node_id` is populated only for the agents a Workflow ran; an agent's
+  own spawns under `<session>/subagents/` could be linked the same way, but that is unbuilt.
+- A Workflow's spend is the runtime's `subagent_tokens` total, and is not cross-checked against its
+  agents' own usage. Its agents carry timing only.
+- A Workflow agent's active time is a heuristic: a pause over five minutes with no tool call open
+  counts as idle. Its `ended_at` is still its last entry, so an agent suspended mid-run spans the
+  suspension in peak-concurrency reads.
 - Spend is a floor. Token counts arrive as one total per node with no input/output split, so
   `graph stats` prices at an assumed 90% input share and prints the all-input/all-output bounds
   beside the estimate.
