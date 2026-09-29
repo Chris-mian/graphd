@@ -1,5 +1,12 @@
 import { spendByProject } from "./projects.mjs";
-import { dedupeNodes, nodeDurationMs, peakConcurrency, serializationCostMs } from "./analysis.mjs";
+import {
+  agentTypeLabel,
+  agentTypeShapeKey,
+  dedupeNodes,
+  nodeDurationMs,
+  peakConcurrency,
+  serializationCostMs,
+} from "./analysis.mjs";
 import { estimateCost } from "./pricing.mjs";
 
 const MULTI_AGENT_THRESHOLD = 2;
@@ -35,7 +42,7 @@ function summarizeRun({ run, nodes }) {
     costUsd: sumOfCosts("estimate"),
     costLowUsd: sumOfCosts("low"),
     costHighUsd: sumOfCosts("high"),
-    agentTypes: nodes.map((node) => node.agent_type ?? node.tool),
+    agentTypes: nodes.map(agentTypeShapeKey),
   };
 }
 
@@ -46,6 +53,7 @@ export function sequentialFanouts(summaries) {
     .sort((left, right) => right.serializedMs - left.serializedMs);
 }
 
+/** Nodes grouped by key; durationMs is null for a bucket holding any unmeasurable node. */
 function tallyBy(nodes, keyOf) {
   const tally = new Map();
   for (const node of nodes) {
@@ -53,7 +61,11 @@ function tallyBy(nodes, keyOf) {
     const bucket = tally.get(key) ?? { key, count: 0, tokens: 0, costUsd: 0, durationMs: 0 };
     bucket.count += 1;
     bucket.tokens += node.total_tokens ?? 0;
-    bucket.durationMs += nodeDurationMs(node);
+    // A Workflow's duration runs until the lead saw its notice, which an idle session stretches
+    // across days. It is not agent time.
+    const durationMs = node.tool === "Workflow" ? null : nodeDurationMs(node);
+    bucket.durationMs =
+      bucket.durationMs === null || durationMs === null ? null : bucket.durationMs + durationMs;
     bucket.costUsd += estimateCost({
       totalTokens: node.total_tokens,
       model: node.resolved_model ?? node.model,
@@ -100,7 +112,7 @@ export function computeStats(store) {
     totalCostHighUsd: summaries.reduce((sum, entry) => sum + entry.costHighUsd, 0),
     sequentialSerializedMs: sequential.reduce((sum, entry) => sum + entry.serializedMs, 0),
     sequentialCostUsd: sequential.reduce((sum, entry) => sum + entry.costUsd, 0),
-    byAgentType: tallyBy(allNodes, (node) => node.agent_type).slice(0, TOP_LIST_LENGTH),
+    byAgentType: tallyBy(allNodes, agentTypeLabel).slice(0, TOP_LIST_LENGTH),
     byModel: tallyBy(allNodes, (node) => node.resolved_model ?? node.model).slice(0, TOP_LIST_LENGTH),
     worstSequential: sequential.slice(0, TOP_LIST_LENGTH),
     repeatedSequences: repeatedSequences(summaries),

@@ -177,7 +177,8 @@ function printStats(stats) {
   for (const bucket of stats.byAgentType) {
     process.stdout.write(
       `  ${bucket.key.padEnd(26)} n=${String(bucket.count).padStart(3)} ` +
-        `${formatUsd(bucket.costUsd).padStart(8)}  ${formatMinutes(bucket.durationMs)}\n`,
+        `${formatUsd(bucket.costUsd).padStart(8)}  ` +
+        `${bucket.durationMs === null ? "-" : formatMinutes(bucket.durationMs)}\n`,
     );
   }
   process.stdout.write("\nrepeated shapes (harvest candidates)\n");

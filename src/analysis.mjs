@@ -26,6 +26,26 @@ function measurableNodes(nodes) {
 }
 
 /** Wall time the node spent working, preferring the async-aware measurement. */
+/**
+ * The bucket a node's spend is reported under. An omitted subagent_type runs general-purpose
+ * ("If omitted, the general-purpose agent is used."); a Workflow is named by its script.
+ * The hook stores a missing type as "", hence `||`.
+ */
+export function agentTypeLabel(node) {
+  if (node.agent_type) return node.agent_type;
+  if (node.tool === "Workflow") return node.label ? `Workflow:${node.label}` : "Workflow (unnamed)";
+  return "general-purpose (default)";
+}
+
+/**
+ * Coarser key for comparing run shapes: a defaulted type is the same agent as an explicit
+ * general-purpose one, and every Workflow is one kind of step whatever its script.
+ */
+export function agentTypeShapeKey(node) {
+  if (node.agent_type) return node.agent_type;
+  return node.tool === "Workflow" ? "Workflow" : "general-purpose";
+}
+
 export function nodeDurationMs(node) {
   if (node.true_duration_ms) return node.true_duration_ms;
   if (node.is_async) return MILLISECONDS_UNKNOWN;
