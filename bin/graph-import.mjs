@@ -41,6 +41,14 @@ export function isScratchCwd(cwd) {
   return typeof cwd === "string" && EXCLUDED_CWD_PATTERNS.some((pattern) => pattern.test(cwd));
 }
 
+// A persisted script is saved as <name>-wf_<run id>.js, a library script as <name>.js.
+const SCRIPT_PATH_NAME_PATTERN = /([^/]+?)(?:-wf_[\w-]+)?\.js$/;
+
+/** The workflow name in a Workflow call's scriptPath, or null. */
+function workflowNameFromScriptPath(scriptPath) {
+  return typeof scriptPath === "string" ? (SCRIPT_PATH_NAME_PATTERN.exec(scriptPath)?.[1] ?? null) : null;
+}
+
 function promptSha(sessionId, tool, prompt) {
   return createHash("sha256")
     .update(`${sessionId}|${tool}|${prompt ?? ""}`)
@@ -163,7 +171,10 @@ function parseTranscript(path) {
           startedAt: entry.timestamp,
           tool: block.name,
           agentType: block.input?.subagent_type ?? null,
-          label: block.input?.description ?? block.input?.name ?? null,
+          label:
+            block.input?.description ??
+            block.input?.name ??
+            workflowNameFromScriptPath(block.input?.scriptPath),
           name: block.input?.name ?? null,
           model: block.input?.model ?? null,
           prompt: block.input?.prompt ?? "",
@@ -238,6 +249,7 @@ function insertSpawn(store, spawn, completion) {
           task_id, output_file, is_async, true_duration_ms, prompt_text, result_text)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET
+         label            = COALESCE(nodes.label, excluded.label),
          name             = COALESCE(excluded.name, nodes.name),
          task_id          = COALESCE(excluded.task_id, nodes.task_id),
          output_file      = COALESCE(excluded.output_file, nodes.output_file),
@@ -251,7 +263,8 @@ function insertSpawn(store, spawn, completion) {
       spawn.sessionId,
       spawn.tool,
       result.agentType ?? spawn.agentType,
-      spawn.label,
+      // An inline or scriptPath Workflow call carries no description; its result names the script.
+      spawn.label ?? result.workflowName ?? null,
       spawn.name ?? null,
       spawn.model,
       promptSha(spawn.sessionId, spawn.tool, spawn.prompt),
