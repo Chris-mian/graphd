@@ -7,6 +7,14 @@ const WORKFLOW_TOOL = "Workflow";
 const AGENT_TOOL = "Agent";
 const DEFAULT_WINDOW_MINUTES = 30;
 
+/** The one-liner that satisfies this rule, quoted for a shell and shared with the CLI usage text. */
+export const TOPOLOGY_COMMAND_EXAMPLE = `graph topology '${JSON.stringify({
+  shape: "pipeline",
+  edges: [{ from: "plan", to: "impl", carries: "UNIT[]" }],
+  barriers: ["report"],
+  barrierJustification: "only node reading all units",
+})}'`;
+
 const DENY_REASON_TEMPLATE = [
   "graphd: {agentCount} agents spawned in the last {windowMinutes} minutes with no declared topology.",
   "",
@@ -20,7 +28,10 @@ const DENY_REASON_TEMPLATE = [
   "  Barriers:  report only",
   "  Because:   report is the only node that reads all units at once",
   "",
-  "Then POST it to graphd (/v1/topology) or re-run: the check passes once a topology exists.",
+  "Then register it and re-run — the check passes once a topology exists:",
+  "",
+  `  ${TOPOLOGY_COMMAND_EXAMPLE}`,
+  "",
   "Schema: ~/.claude/workflows/lib/contracts.md. Kill switch: touch ~/.graphd/DISABLED",
 ].join("\n");
 

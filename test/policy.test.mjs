@@ -51,6 +51,16 @@ test("the third Agent with no topology is denied", () => {
   assert.equal(verdict.wouldDeny, true);
 });
 
+test("the denial hands back a command whose own topology clears the gate", () => {
+  const store = freshStore();
+  spawnAgents(store, THRESHOLD);
+  const verdict = evaluateSpawn(store, ENFORCING_CONFIG, { runId: RUN_ID, tool: "Agent" });
+  assert.match(verdict.reason, /graph topology '/);
+  const quoted = verdict.reason.match(/graph topology '(.+)'/)[1];
+  assert.equal(handleTopology(store, { sessionId: RUN_ID, topology: JSON.parse(quoted) }).accepted, true);
+  assert.equal(evaluateSpawn(store, ENFORCING_CONFIG, { runId: RUN_ID, tool: "Agent" }).wouldDeny, false);
+});
+
 test("a spawn below the threshold is allowed", () => {
   const store = freshStore();
   spawnAgents(store, THRESHOLD - 1);
