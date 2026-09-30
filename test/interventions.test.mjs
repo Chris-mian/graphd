@@ -84,3 +84,58 @@ test("a correction delivered as a block array still classifies", () => {
   const blocks = [{ type: "text", text: "no, that's wrong — revert it" }];
   assert.equal(classifyHumanTurn(blocks), INTERVENTION_KINDS.CORRECTION);
 });
+
+test("a short reply questioning the agent's naming is a correction", () => {
+  const turn = "why is it called this? we are simply doing rerouting. no account is blocked.";
+  assert.equal(classifyHumanTurn(turn), INTERVENTION_KINDS.CORRECTION);
+  const afterPreamble =
+    "ok i read through the handler, the enum, the migration and the notice copy you added. " +
+    turn;
+  assert.equal(classifyHumanTurn(afterPreamble), INTERVENTION_KINDS.CORRECTION);
+});
+
+test("disagreement opening a numbered reply is a correction", () => {
+  assert.equal(classifyHumanTurn("1. i dont really agree"), INTERVENTION_KINDS.CORRECTION);
+  assert.equal(
+    classifyHumanTurn("2. sounds good\n3. i don't agree, keep the old name"),
+    INTERVENTION_KINDS.CORRECTION,
+  );
+  assert.equal(classifyHumanTurn("thats not how the queue drains"), INTERVENTION_KINDS.CORRECTION);
+  assert.equal(classifyHumanTurn("what do you mean by stale?"), INTERVENTION_KINDS.CORRECTION);
+});
+
+test("a challenge phrase inside a long brief is not a correction", () => {
+  const brief =
+    "New task. Add a naming section to the guide. ".repeat(10) +
+    "Readers keep asking why is it called a shard when it is really a partition.";
+  assert.equal(classifyHumanTurn(brief), null);
+});
+
+test("an earlier measurement the agent retracts is a self-correction", () => {
+  const text =
+    "`rg` skips hidden dirs by default, and .claude is hidden, so my earlier 'zero' " +
+    "measurements were wrong.";
+  assert.equal(classifyAssistantText(text), SELF_CORRECTION);
+  assert.equal(matchedSentence(text), text);
+  assert.equal(classifyAssistantText("My earlier count of open PRs was wrong."), SELF_CORRECTION);
+});
+
+test("a retraction phrase the agent is quoting is not a retraction", () => {
+  const quoting =
+    'Detector false positives beyond the fixtures: "Tracker correction —" and ' +
+    '"If it\'s still red ... I was wrong about the cause".';
+  assert.equal(classifyAssistantText(quoting), null);
+  assert.equal(classifyAssistantText("The pattern `\\bi was wrong\\b` fires anywhere."), null);
+  assert.equal(
+    classifyAssistantText("It matched 'If it's still red, I was wrong about the cause' again."),
+    null,
+  );
+  assert.equal(classifyAssistantText('"Correction: the gate is off" is the quote it stored.'), null);
+});
+
+test("apostrophes around a real retraction do not hide it", () => {
+  assert.equal(
+    classifyAssistantText("I don't know why, but I was wrong about the pool — it's fine."),
+    SELF_CORRECTION,
+  );
+});

@@ -2,7 +2,7 @@ const INTERRUPT_MARKER = "[Request interrupted by user";
 const ROMP_PROMPT_PATTERN = /<prompt\s+[0-9a-f]+>([\s\S]*?)<\/prompt\s+[0-9a-f]+>/i;
 const WRAPPER_BLOCK_PATTERN = /<(open-goals|system-reminder|command-name|local-command)[\s\S]*?>/gi;
 const QUOTE_LENGTH = 220;
-const SENTENCE_SPLIT_PATTERN = /(?<=[.!?])\s+/;
+const SENTENCE_BOUNDARY_PATTERN = /(?<=[.!?])\s+/g;
 
 /** Content the harness injects into the user turn. Not a human stepping in. */
 const MACHINE_PREFIXES = [
@@ -54,6 +54,19 @@ const CORRECTION_PATTERNS = [
   /\bnot what i (asked|meant|wanted)\b/i,
 ];
 
+/**
+ * A reply challenging the agent's output: a question at its choice, or disagreement opening a line.
+ * Counts anywhere in a short turn only; in a long brief the same words are asking, not objecting.
+ */
+const CHALLENGE_PATTERNS = [
+  /\bwhy (?:is|are|was|were) (?:it|this|that|they|these|those) (?:called|named)\b/i,
+  /\bwhy did you\b/i,
+  /\bwhat do you mean\b/i,
+  /^(?:\d+[.)]\s*)?i (?:do ?n['’]?t|do not) (?:really |fully )?agree\b/im,
+  /^(?:\d+[.)]\s*)?that['’]?s not\b/im,
+];
+const CHALLENGE_TURN_LENGTH = 400;
+
 /** Phrases where the agent is retracting or repairing its own earlier claim. */
 const SELF_CORRECTION_PATTERNS = [
   /\bi was wrong\b/i,
@@ -61,6 +74,7 @@ const SELF_CORRECTION_PATTERNS = [
   /\bi misread\b/i,
   /\bi (incorrectly|wrongly) (said|claimed|assumed|reported)\b/i,
   /\bearlier i (said|claimed|reported)\b.*\b(but|actually|in fact)\b/i,
+  /\bmy earlier\s+[^.!?]{1,60}?\s(?:was|were)\s+wrong\b/i,
   /\bthat (claim|number|statement) was (wrong|bogus|incorrect)\b/i,
   /\bscratch that\b/i,
 ];
@@ -80,6 +94,47 @@ const OPENING_SELF_CORRECTION_PATTERNS = [
  * red, I was wrong about the cause" is a plan, not a correction.
  */
 const CONDITIONAL_CLAUSE_PATTERN = /^\s*(?:if|unless|should)\b/i;
+
+/**
+ * Spans the agent is quoting, not saying. Fences go first so their backticks are not paired as
+ * inline code; a single quote only opens and closes at a word edge, so "don't" is not a quote.
+ */
+const QUOTED_SPAN_PATTERNS = [
+  /```[\s\S]*?```/g,
+  /`[^`\n]+`/g,
+  /"[^"\n]+"/g,
+  /“[^”\n]+”/g,
+  /(?<![\w'])'(?:[^'\n]|(?<=\w)'(?=\w))+?'(?![\w'])/g,
+];
+
+/** Blanks the inside of every quoted span at the same length, so offsets match the original. */
+function maskQuotedSpans(text) {
+  return QUOTED_SPAN_PATTERNS.reduce(
+    (masked, pattern) =>
+      masked.replace(
+        pattern,
+        (span) => span[0] + "_".repeat(span.length - 2) + span[span.length - 1],
+      ),
+    text,
+  );
+}
+
+/** Splits text into sentences, each as the original and with its quoted spans masked. */
+function sentenceSpans(text) {
+  const original = String(text);
+  const masked = maskQuotedSpans(original);
+  const spans = [];
+  let start = 0;
+  for (const boundary of masked.matchAll(SENTENCE_BOUNDARY_PATTERN)) {
+    spans.push({
+      original: original.slice(start, boundary.index),
+      masked: masked.slice(start, boundary.index),
+    });
+    start = boundary.index + boundary[0].length;
+  }
+  spans.push({ original: original.slice(start), masked: masked.slice(start) });
+  return spans;
+}
 
 /** Flattens a turn's content, which the transcript writes either as a string or a block array. */
 export function contentText(rawContent) {
@@ -118,9 +173,10 @@ export function classifyHumanTurn(rawContent) {
   if (!text) return null;
   if (MACHINE_PREFIXES.some((prefix) => text.startsWith(prefix))) return null;
   if (text.startsWith(">")) return null;
-  return matchesAny(CORRECTION_PATTERNS, text.slice(0, OPENING_WINDOW))
-    ? INTERVENTION_KINDS.CORRECTION
-    : null;
+  const isCorrection =
+    matchesAny(CORRECTION_PATTERNS, text.slice(0, OPENING_WINDOW)) ||
+    (text.length <= CHALLENGE_TURN_LENGTH && matchesAny(CHALLENGE_PATTERNS, text));
+  return isCorrection ? INTERVENTION_KINDS.CORRECTION : null;
 }
 
 /**
@@ -146,27 +202,23 @@ export function classifyAssistantText(text) {
   if (typeof text !== "string" || text.length === 0) return null;
   const isSelfCorrection =
     checkHasUnconditionalMarker(text) ||
-    matchesAny(OPENING_SELF_CORRECTION_PATTERNS, text.slice(0, OPENING_WINDOW));
+    matchesAny(OPENING_SELF_CORRECTION_PATTERNS, maskQuotedSpans(text).slice(0, OPENING_WINDOW));
   return isSelfCorrection ? INTERVENTION_KINDS.SELF_CORRECTION : null;
 }
 
-/** Whether a retraction marker appears in a sentence that is stating it, not supposing it. */
+/** Whether a retraction marker appears unquoted in a sentence stating it, not supposing it. */
 function checkHasUnconditionalMarker(text) {
-  return String(text)
-    .split(SENTENCE_SPLIT_PATTERN)
-    .some(
-      (sentence) =>
-        matchesAny(SELF_CORRECTION_PATTERNS, sentence) &&
-        !CONDITIONAL_CLAUSE_PATTERN.test(sentence),
-    );
+  return sentenceSpans(text).some(
+    ({ masked }) =>
+      matchesAny(SELF_CORRECTION_PATTERNS, masked) && !CONDITIONAL_CLAUSE_PATTERN.test(masked),
+  );
 }
 
 /** Returns the sentence that triggered the match, so a report quotes the retraction itself. */
 export function matchedSentence(text) {
   const allPatterns = [...SELF_CORRECTION_PATTERNS, ...OPENING_SELF_CORRECTION_PATTERNS];
-  const sentences = String(text).split(SENTENCE_SPLIT_PATTERN);
-  const hit = sentences.find((sentence) => matchesAny(allPatterns, sentence));
-  return toQuote(hit ?? text);
+  const hit = sentenceSpans(text).find(({ masked }) => matchesAny(allPatterns, masked));
+  return toQuote(hit?.original ?? text);
 }
 
 /** Trims a quote to a single readable line for reports. */
