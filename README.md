@@ -39,17 +39,20 @@ is denied. Threshold is `rules.requireTopologyBeyondNAgents.threshold` in `confi
 
 `Workflow` spawns are never denied: a workflow script is itself a declared topology.
 
-Satisfy the rule by POSTing the TOPOLOGY artifact (schema:
-`~/.claude/workflows/lib/contracts.md`). The POST is validated: a declaration needs at least one
-node or edge, and every edge needs a `carries` naming the artifact that crosses it. A rejected
+Satisfy the rule with `graph topology` (schema: `~/.claude/workflows/lib/contracts.md`). It reads
+the token and takes the session id from `CLAUDE_CODE_SESSION_ID`, so the gate is keyed on the
+session that will do the spawning. The declaration is validated: it needs at least one node or
+edge, and every edge needs a `carries` naming the artifact that crosses it. A rejected
 declaration is not stored, so the failure lands where it was written rather than at the next
 spawn.
 
 ```bash
-curl -s -H "Authorization: Bearer $(cat ~/.graphd/token)" -H 'content-type: application/json' \
-  -X POST http://127.0.0.1:8787/v1/topology \
-  -d '{"sessionId":"<session>","topology":{"shape":"pipeline","edges":[{"from":"plan","to":"impl","carries":"UNIT[]"}],"barriers":["report"],"barrierJustification":"only node reading all units"}}'
+graph topology '{"shape":"pipeline","edges":[{"from":"plan","to":"impl","carries":"UNIT[]"}],"barriers":["report"],"barrierJustification":"only node reading all units"}'
 ```
+
+The underlying `POST /v1/topology` still takes an explicit `sessionId`. A session id that no run
+has used yet is accepted and opens a run of its own, so a hand-written POST under the wrong id
+returns 200 while leaving the gate shut — reach for the command instead.
 
 ## Fail-open guarantees
 
