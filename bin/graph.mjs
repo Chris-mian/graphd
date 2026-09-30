@@ -2,6 +2,7 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import { CONFIG_PATH, KILL_SWITCH_PATH, loadConfig, readOrCreateToken } from "../src/config.mjs";
 import { describeRunLookupFailure } from "../src/routes.mjs";
+import { TOPOLOGY_COMMAND_EXAMPLE } from "../src/policy.mjs";
 
 const DEFAULT_LIMIT = 20;
 const MILLISECONDS_PER_SECOND = 1000;
@@ -22,12 +23,16 @@ const USAGE = `graph — inspect graphd
   graph decisions         proposals waiting on a human accept/reject
   graph decide <id> <accepted|rejected>
   graph propose <file.json>  file a harvest's proposals: {"proposals":[…]}
+  graph topology '<json>' declare this session's shape, so the spawn gate lets a fan-out through
   graph doctor            check hooks, token, launch agent, enforcement readiness
   graph enforce <on|off>  flip blocking in config.json
   graph pause             create the kill switch (disables all denies)
   graph resume            remove the kill switch
   graph health            daemon status
 `;
+
+const SESSION_ID_VARIABLE = "CLAUDE_CODE_SESSION_ID";
+const TOPOLOGY_USAGE = `usage: ${TOPOLOGY_COMMAND_EXAMPLE}`;
 
 function baseUrl() {
   return process.env.GRAPHD_URL ?? "http://127.0.0.1:8787";
@@ -330,6 +335,35 @@ function printDiagnostics(checks) {
   }
 }
 
+/**
+ * Registers this session's declared topology so the spawn gate lets a fan-out through.
+ * The session id comes from the environment rather than the caller: the gate is keyed on the
+ * session that spawns the agents, and a topology filed under any other id leaves it shut.
+ */
+async function registerTopology(topologyJson) {
+  const sessionId = process.env[SESSION_ID_VARIABLE];
+  if (!sessionId) {
+    throw new Error(
+      `graph topology needs ${SESSION_ID_VARIABLE} set; run it from the session that will ` +
+        "spawn the agents.",
+    );
+  }
+  if (!topologyJson) throw new Error(TOPOLOGY_USAGE);
+  let topology;
+  try {
+    topology = JSON.parse(topologyJson);
+  } catch (error) {
+    throw new Error(`graph topology could not read that as JSON: ${error.message}\n${TOPOLOGY_USAGE}`);
+  }
+  const outcome = await postDaemon("/v1/topology", { sessionId, cwd: process.cwd(), topology });
+  if (!outcome.accepted) {
+    process.stderr.write(`${outcome.reason}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write(`topology accepted: shape=${outcome.shape ?? "unnamed"} run=${outcome.runId}\n`);
+}
+
 function setEnforcement(isEnabled) {
   const config = loadConfig();
   config.enforce = isEnabled;
@@ -420,6 +454,9 @@ try {
       process.stdout.write(
         `${JSON.stringify(await postDaemon("/v1/proposals/decide", { id: argument, status: process.argv[4] }))}\n`,
       );
+      break;
+    case "topology":
+      await registerTopology(argument);
       break;
     case "doctor":
       printDiagnostics((await callDaemon("/v1/doctor")).checks);
