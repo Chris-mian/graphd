@@ -20,11 +20,14 @@ const MINIMUM_REASON_LENGTH = 12;
 const SESSION_MANAGER_RECAP_PATTERN =
   /<[a-z-]*(goals?|unit|segment|turn|work)\s+[0-9a-f]{6,}>|romp-system/i;
 
+/** A task notification is the harness reporting an agent finished, not a human stepping in. */
+const NOT_A_HUMAN_TURN_PATTERN = /<task-notification>/i;
+
 /**
- * Turns that look like a human redirect but are not one. A task notification is the harness
- * reporting an agent finished; a quoted reply repeats a turn already counted where it was said.
+ * A reply to a quoted part of the conversation. The header and the quote repeat earlier text;
+ * what follows the quote is the human's new turn, often an answer or a pushback.
  */
-const NOT_A_HUMAN_TURN_PATTERN = /<task-notification>|^Replying to this part of the conversation:/i;
+const REPLY_HEADER = "Replying to this part of the conversation:";
 
 /**
  * Turns that carry text but state no reason: a slash command, and the boilerplate that resumes a
@@ -64,6 +67,12 @@ const CHALLENGE_PATTERNS = [
   /\bwhat do you mean\b/i,
   /^(?:\d+[.)]\s*)?i (?:do ?n['’]?t|do not) (?:really |fully )?agree\b/im,
   /^(?:\d+[.)]\s*)?that['’]?s not\b/im,
+  /\bwhy (?:is|would|does) (?:this|that|it) (?:an? )?(?:bug|problem|issue|needed|necessary|required|still here|need)\b/i,
+  /\bstill too\b/i,
+  /\bstill not (?:fully |quite )?(?:right|fixed|correct|matching|clear|what|working)\b/i,
+  /\btoo (?:long|detailed|verbose)\b/i,
+  /\bnot enough (?:high[- ]level|detail|context|structure|explanation)\b/i,
+  /\bno (?:meaning|point) (?:to|in)\b/i,
 ];
 const CHALLENGE_TURN_LENGTH = 400;
 
@@ -77,6 +86,8 @@ const SELF_CORRECTION_PATTERNS = [
   /\bmy earlier\s+[^.!?]{1,60}?\s(?:was|were)\s+wrong\b/i,
   /\bthat (claim|number|statement) was (wrong|bogus|incorrect)\b/i,
   /\bscratch that\b/i,
+  /^(?:[-*#>\s]|\*\*)*correction to my\b/i,
+  /^(?:[-*#>\s]|\*\*)*correction to the [^.!?:\n]{1,40}:/i,
 ];
 
 /**
@@ -146,13 +157,38 @@ export function contentText(rawContent) {
     .join("\n");
 }
 
+/**
+ * The new text under a reply's quote. The client sometimes repeats the quoted text unquoted right
+ * after it, so a leading copy of the quote is dropped too.
+ */
+function replyBody(raw) {
+  if (!raw.startsWith(REPLY_HEADER)) return raw;
+  const lines = raw.slice(REPLY_HEADER.length).split("\n");
+  const quoted = [];
+  let index = 0;
+  while (index < lines.length && (lines[index].startsWith(">") || lines[index].trim() === "")) {
+    if (lines[index].startsWith(">")) quoted.push(lines[index].replace(/^>\s?/, ""));
+    index += 1;
+  }
+  const body = lines.slice(index).join("\n").trim();
+  const quoteWords = quoted.join(" ").split(/\s+/).filter(Boolean);
+  if (quoteWords.length === 0) return body;
+  // Line breaks in the repeat need not match the quote's, so compare word by word.
+  const repeat = new RegExp(`^${quoteWords.map(escapeRegExp).join("\\s+")}`);
+  return body.replace(repeat, "").trim();
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** Strips romp prompt wrappers and injected blocks, leaving what the human actually typed. */
 export function humanText(rawContent) {
   const raw = contentText(rawContent);
   if (!raw) return "";
   const wrapped = ROMP_PROMPT_PATTERN.exec(raw);
   const inner = wrapped ? wrapped[1] : raw;
-  return inner.replace(WRAPPER_BLOCK_PATTERN, "").trim();
+  return replyBody(inner.replace(WRAPPER_BLOCK_PATTERN, "").trim());
 }
 
 function matchesAny(patterns, text) {

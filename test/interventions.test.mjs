@@ -139,3 +139,71 @@ test("apostrophes around a real retraction do not hide it", () => {
     SELF_CORRECTION,
   );
 });
+
+const CORRECTION = INTERVENTION_KINDS.CORRECTION;
+
+test("a reply under a quoted part of the conversation is classified on its own text", () => {
+  const pushback =
+    "Replying to this part of the conversation:\n> 59464\n\n" +
+    "No, this whole stack has a lot of issues. I don't want to merge the whole stack at the same time.";
+  assert.equal(classifyHumanTurn(pushback), CORRECTION);
+  const challenge =
+    "Replying to this part of the conversation:\n> #51252 bug: a clip with an empty roots list is treated as an original.\n\n" +
+    "why is this a bug? is it not original? add the things you want to add as follow up PR in this stack";
+  assert.equal(classifyHumanTurn(challenge), CORRECTION);
+});
+
+test("a reply that repeats the quote unquoted is judged on what follows the repeat", () => {
+  // The quote opens with "Wait", a correction marker, so judging the repeat would misfire.
+  const quote = "Wait for CI on #59464 before merging the stack?";
+  const reply = (body) => `Replying to this part of the conversation:\n> ${quote}\n\n${quote}\n${body}`;
+  assert.equal(classifyHumanTurn(reply("yes, merge after CI goes green.")), null);
+  assert.equal(classifyHumanTurn(reply("No, that's not what I asked. Merge them one at a time.")), CORRECTION);
+});
+
+test("a repeated quote of several paragraphs is stripped though its line breaks differ", () => {
+  const turn =
+    "Replying to this part of the conversation:\n> Wait for CI on #59464 before merging.\n> \n> Then rebase the rest of the stack.\n\n" +
+    "Wait for CI on #59464 before merging.\nThen rebase the rest of the stack.\n\nyes, sounds good.";
+  assert.equal(classifyHumanTurn(turn), null);
+});
+
+test("status and debugging questions are not challenges", () => {
+  for (const turn of [
+    "The scaffolder rework (#50679) is still not started.\ngo ahead",
+    "is CI still not green on #123?",
+    "why does it fail? here is the log from the runner",
+    "why is it flaky?",
+    "there is not enough disk on the runner, bump the volume",
+  ]) {
+    assert.equal(classifyHumanTurn(turn), null, turn);
+  }
+  assert.equal(classifyHumanTurn("Why does that need me? You can merge yourself."), CORRECTION);
+  assert.equal(classifyHumanTurn("milestones still not fully matching."), CORRECTION);
+});
+
+test("a reply carrying no new text is not an intervention", () => {
+  assert.equal(classifyHumanTurn("Replying to this part of the conversation:\n> 62053\n"), null);
+});
+
+test("short feedback on quality or a challenge to a label is a correction", () => {
+  assert.equal(
+    classifyHumanTurn("the doc is still too long and too detailed. and not enough high level/architechtural structure"),
+    CORRECTION,
+  );
+  assert.equal(classifyHumanTurn("there is no meaning to keep so many docs for suno pass."), CORRECTION);
+  assert.equal(classifyHumanTurn("why is this a bug? is it not original?"), CORRECTION);
+});
+
+test("the same feedback words deep in a long brief are not a correction", () => {
+  const brief = `${"Context for the next task. ".repeat(20)}Keep each section short; a doc that is too long gets skipped.`;
+  assert.equal(classifyHumanTurn(brief), null);
+});
+
+test("an announced correction to the agent's own earlier answer is a self-correction", () => {
+  assert.equal(classifyAssistantText("**Correction to my last answer:** Quill serves no pushes for people."), SELF_CORRECTION);
+  assert.equal(classifyAssistantText("**Correction to the overview doc:** I changed the propagation line."), SELF_CORRECTION);
+  assert.equal(classifyAssistantText("I applied the reviewer's correction to the doc: the line now says weekly."), null);
+  assert.equal(classifyAssistantText("Thanks for the correction to my plan; I updated step 3."), null);
+  assert.equal(classifyAssistantText("Chris's correction to the schema: owner_id is nullable."), null);
+});
