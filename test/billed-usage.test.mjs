@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { nodeCost, nodeTokens, pricingBasis, ratesFor, usageCost } from "../src/pricing.mjs";
+import { nodeCost, nodeTokens, pricingBasis, ratesFor, reportedModel, usageCost } from "../src/pricing.mjs";
 import { mergeUsage, subagentMeta, usageByModel } from "../src/transcriptusage.mjs";
 
 function assistantEntry({ id, model = "claude-opus-5-5", usage }) {
@@ -139,4 +139,69 @@ test("subagent meta resolves a top-level agent and ignores workflow agents and m
   assert.equal(subagentMeta(join(subagents, "workflows", "run-1", "agent-def.jsonl")), null);
   assert.equal(subagentMeta(join(root, "session-1.jsonl")), null);
   assert.equal(subagentMeta(join(subagents, "agent-missing.jsonl")), null);
+});
+
+const ONE_MILLION_CACHE_READS = { input: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 1_000_000, output: 0, turns: 1 };
+
+test("a model without its own read rate reads cache at 0.1x input; Sonnet 5.5 at its published 0.05x", () => {
+  assert.equal(usageCost({ "claude-opus-5": ONE_MILLION_CACHE_READS }), 0.5);
+  assert.equal(usageCost({ "claude-sonnet-5": ONE_MILLION_CACHE_READS }), 0.2);
+  assert.equal(usageCost({ "claude-sonnet-5-5": ONE_MILLION_CACHE_READS }), 0.1);
+});
+
+test("each cache write duration has its own multiplier", () => {
+  const writes = (cacheWrite5m, cacheWrite1h) => ({
+    "claude-opus-5": { input: 0, cacheWrite5m, cacheWrite1h, cacheRead: 0, output: 0, turns: 1 },
+  });
+  assert.equal(usageCost(writes(1_000_000, 0)), 6.25);
+  assert.equal(usageCost(writes(0, 1_000_000)), 10);
+});
+
+test("a dated id reaches its family through the longest prefix", () => {
+  assert.equal(ratesFor("claude-haiku-4-5-20251001").input, 1);
+  assert.equal(ratesFor("claude-opus-5-5-20261101").input, 4);
+  assert.equal(ratesFor("claude-opus-4-8[1m]").input, 5);
+});
+
+test("billed tokens include cache traffic", () => {
+  const node = {
+    billed_usage: JSON.stringify({
+      "claude-opus-5-5": { input: 10, cacheWrite5m: 600, cacheWrite1h: 400, cacheRead: 100_000, output: 500, turns: 1 },
+    }),
+  };
+  assert.equal(nodeTokens(node), 101_510);
+});
+
+test("a Haiku 5.5 turn past 100K prompt tokens is priced at the long-prompt rate", () => {
+  const longTurn = { input_tokens: 1, cache_read_input_tokens: 150_000, output_tokens: 10 };
+  const byModel = usageByModel([assistantEntry({ id: "msg-1", model: "claude-haiku-5-5", usage: longTurn })]);
+  assert.deepEqual(Object.keys(byModel), ["claude-haiku-5-5>100k"]);
+  assert.equal(ratesFor("claude-haiku-5-5>100k").input, 0.5);
+});
+
+test("a response whose iterations ran on two models bills each to its own", () => {
+  const iterations = [
+    { model: "claude-fable-5-1", input_tokens: 0, cache_read_input_tokens: 1_000, output_tokens: 10 },
+    { model: "claude-opus-5-5", input_tokens: 0, cache_read_input_tokens: 2_000, output_tokens: 20 },
+  ];
+  const byModel = usageByModel([
+    assistantEntry({ id: "msg-1", model: "claude-opus-5-5", usage: { ...iterations[1], iterations } }),
+  ]);
+  assert.equal(byModel["claude-fable-5-1"].cacheRead, 1_000);
+  assert.equal(byModel["claude-opus-5-5"].cacheRead, 2_000);
+  assert.equal(byModel["claude-fable-5-1"].turns + byModel["claude-opus-5-5"].turns, 1);
+});
+
+test("an empty billed record is a priced zero, not an unpriced node", () => {
+  assert.equal(pricingBasis({ billed_usage: "{}", total_tokens: 9_000 }), "billed");
+  assert.equal(nodeCost({ billed_usage: "{}", total_tokens: 9_000 }).estimate, 0);
+});
+
+test("a node with no recorded model is reported under the model it billed most on", () => {
+  const cheap = { input: 1_000, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, output: 0, turns: 1 };
+  const costly = { input: 1_000_000, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, output: 0, turns: 1 };
+  const node = { billed_usage: JSON.stringify({ "claude-haiku-4-5": cheap, "claude-fable-5-1": costly }) };
+  assert.equal(reportedModel(node), "claude-fable-5-1");
+  assert.equal(reportedModel({ model: "opus", billed_usage: node.billed_usage }), "opus");
+  assert.equal(reportedModel({}), null);
 });

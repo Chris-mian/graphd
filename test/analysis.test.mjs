@@ -133,3 +133,16 @@ test("an agent a Workflow ran never collapses into a same-labelled backfill row"
   const workflowChild = { ...backfillRow, id: "wf:wf_run:a1", parent_node_id: "toolu_workflow" };
   assert.equal(dedupeNodes([backfillRow, workflowChild]).length, 2);
 });
+
+test("dedupe keeps the backfill row's billed usage when the earlier hook row has none", () => {
+  const hookRow = { ...asyncNode("hash-1", "2026-09-21T08:59:59.900Z", null, "PR C"), is_async: 0 };
+  const backfillRow = {
+    ...asyncNode("toolu_1", "2026-09-21T09:00:00.000Z", "2026-09-21T09:06:00.000Z", "PR C"),
+    billed_usage: '{"claude-opus-5-5":{}}',
+    billed_share: 0.5,
+  };
+  const [merged] = dedupeNodes([{ ...hookRow, billed_usage: null, billed_share: null }, backfillRow]);
+  assert.equal(merged.id, "hash-1", "the earlier row is the one kept");
+  assert.equal(merged.billed_usage, '{"claude-opus-5-5":{}}');
+  assert.equal(merged.billed_share, 0.5);
+});

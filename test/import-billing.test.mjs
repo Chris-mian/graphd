@@ -150,3 +150,122 @@ test("a spawn answered with an error string is rejected, keeps its reason, and b
   assert.equal(denied.result_text, DENY_TEXT);
   assert.equal(denied.billed_usage, null);
 });
+
+function openFixtureStore(stateDir) {
+  return new DatabaseSync(join(stateDir, "graph.db"));
+}
+
+test("re-importing a store whose denied spawn was filed as ok marks it rejected", () => {
+  const fixture = billingFixture();
+  runImport(fixture);
+  const store = openFixtureStore(fixture.stateDir);
+  store.prepare("UPDATE nodes SET status = 'ok', result_text = NULL WHERE id = 'toolu_denied'").run();
+  store.close();
+  runImport(fixture);
+  const denied = nodesById(fixture.stateDir).get("toolu_denied");
+  assert.equal(denied.status, "rejected");
+  assert.equal(denied.result_text, DENY_TEXT);
+});
+
+test("a teammate with no name in its input takes the name its result reports", () => {
+  const fixture = billingFixture();
+  const leadPath = join(fixture.home, ".claude", "projects", "-work-repo", `${SESSION_ID}.jsonl`);
+  writeFileSync(
+    leadPath,
+    spawnEntries({
+      toolUseId: "toolu_unnamed",
+      input: { description: "unnamed", prompt: "e", team_name: "t" },
+      result: { status: "teammate_spawned", name: "late-name", model: "claude-opus-5-5" },
+      second: 40,
+    })
+      .map((entry) => JSON.stringify(entry))
+      .join("\n") + "\n",
+    { flag: "a" },
+  );
+  runImport(fixture);
+  assert.equal(nodesById(fixture.stateDir).get("toolu_unnamed").name, "late-name");
+});
+
+test("a Workflow answered with an error string is an error, not a rejected spawn", () => {
+  const fixture = billingFixture();
+  const leadPath = join(fixture.home, ".claude", "projects", "-work-repo", `${SESSION_ID}.jsonl`);
+  const entries = spawnEntries({
+    toolUseId: "toolu_wf_error",
+    input: { description: "wf", prompt: "f" },
+    result: "Error: The journal for workflow run wf_x is not on disk",
+    second: 45,
+  });
+  entries[0].message.content[0].name = "Workflow";
+  writeFileSync(leadPath, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n", { flag: "a" });
+  runImport(fixture);
+  assert.equal(nodesById(fixture.stateDir).get("toolu_wf_error").status, "error");
+});
+
+test("a message from an agent named but not identified is filed as the agent's, and old rows are repaired", () => {
+  const fixture = billingFixture();
+  const subagentPath = join(fixture.home, ".claude", "projects", "-work-repo", SESSION_ID, "subagents", "agent-ahelper-1.jsonl");
+  const message = {
+    ...SHARED,
+    isSidechain: true,
+    agentName: "helper",
+    type: "assistant",
+    timestamp: at(50),
+    message: { id: "mate-send", content: [{ type: "tool_use", id: "toolu_send", name: "SendMessage", input: { to: "team-lead" } }] },
+  };
+  writeFileSync(subagentPath, `${JSON.stringify(message)}\n`, { flag: "a" });
+  runImport(fixture);
+  const store = openFixtureStore(fixture.stateDir);
+  store
+    .prepare(
+      `INSERT INTO resumptions (id, run_id, ts, target_ref, target_kind, sender, sender_ref)
+       VALUES ('old-teammate', ?, ?, 'team-lead', 'name', 'lead', 'carol'),
+              ('old-lead', ?, ?, 'helper', 'name', 'lead', NULL)`,
+    )
+    .run(SESSION_ID, at(51), SESSION_ID, at(52));
+  store.close();
+  runImport(fixture);
+  const reader = openFixtureStore(fixture.stateDir);
+  const senders = Object.fromEntries(
+    reader.prepare("SELECT id, sender, sender_ref FROM resumptions").all().map((row) => [row.id, [row.sender, row.sender_ref]]),
+  );
+  reader.close();
+  assert.deepEqual(senders.toolu_send, ["agent", "helper"]);
+  assert.deepEqual(senders["old-teammate"], ["agent", "carol"]);
+  assert.deepEqual(senders["old-lead"], ["lead", null]);
+});
+
+test("a resumed Workflow and its original each own only the agents they ran", () => {
+  const fixture = billingFixture();
+  const projectDir = join(fixture.home, ".claude", "projects", "-work-repo");
+  const workflowDir = join(projectDir, SESSION_ID, "subagents", "workflows", "wf_run");
+  mkdirSync(workflowDir, { recursive: true });
+  for (const [agentId, second] of [["early", 53], ["late", 57]]) {
+    writeFileSync(join(workflowDir, `agent-${agentId}.meta.json`), JSON.stringify({ agentType: "impl-pressure-tester" }));
+    writeJsonLines(join(workflowDir, `agent-${agentId}.jsonl`), [agentTurn({ messageId: `wf-${agentId}`, second })]);
+  }
+  const workflowCall = (toolUseId, second) => {
+    const entries = spawnEntries({
+      toolUseId,
+      input: { description: "verify", script: "x" },
+      result: { status: "ok", transcriptDir: workflowDir, runId: "wf_run" },
+      second,
+    });
+    entries[0].message.content[0].name = "Workflow";
+    return entries;
+  };
+  const leadPath = join(projectDir, `${SESSION_ID}.jsonl`);
+  writeFileSync(
+    leadPath,
+    [...workflowCall("toolu_wf_original", 52), ...workflowCall("toolu_wf_resumed", 56)]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n") + "\n",
+    { flag: "a" },
+  );
+  runImport(fixture);
+  runImport(fixture);
+  const nodes = nodesById(fixture.stateDir);
+  assert.equal(billedTurns(nodes.get("toolu_wf_original")), 1);
+  assert.equal(billedTurns(nodes.get("toolu_wf_resumed")), 1);
+  assert.equal(nodes.get("wf:wf_run:early").parent_node_id, "toolu_wf_original");
+  assert.equal(nodes.get("wf:wf_run:late").parent_node_id, "toolu_wf_resumed");
+});

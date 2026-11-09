@@ -466,7 +466,7 @@ function renderTimeline(detail) {
         `<b>${escapeHtml(node.label ?? node.tool)}</b><br>` +
           `${escapeHtml(node.agent_type ?? "–")} · ${escapeHtml(node.resolved_model ?? node.model ?? "inherited")}<br>` +
           `${escapeHtml(node.status)} · ${seconds(node.duration_ms)}` +
-          `${node.tokens ? ` · ${node.tokens.toLocaleString()} tokens · ${money(node.costUsd)}` : ""}` +
+          `${node.tokens ? ` · ${node.tokens.toLocaleString()} tokens · ${nodeCost(node)}` : ""}` +
           `${node.tool_use_count ? ` · ${node.tool_use_count} tool calls` : ""}` +
           `<br><span class="mono">${escapeHtml(node.agent_id ?? node.id)}</span>`,
       ),

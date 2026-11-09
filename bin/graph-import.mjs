@@ -310,41 +310,76 @@ function insertSpawn(store, spawn, completion) {
     );
 }
 
+/** Workflow calls grouped by transcript directory, earliest first; a resumed run reuses its original's. */
+function groupByTranscriptDir(parents) {
+  const groups = new Map();
+  for (const parent of parents) {
+    const group = groups.get(parent.transcriptDir) ?? [];
+    group.push(parent);
+    groups.set(parent.transcriptDir, group);
+  }
+  for (const group of groups.values()) {
+    group.sort((left, right) => Date.parse(left.spawn.startedAt) - Date.parse(right.spawn.startedAt));
+  }
+  return [...groups.values()];
+}
+
 /**
- * One node per agent a Workflow ran, parented to the Workflow node. Children carry timing only:
- * the Workflow node keeps the runtime's token total, so spend is not counted twice. The parent's
- * duration becomes the union of its children's active spans. Returns the child count.
+ * Every Workflow call that may own this run's agents: the calls read this import, plus any call an
+ * earlier import gave some of them to that fell outside this import's window. Earliest first.
  */
-function insertWorkflowChildren(store, { spawn, transcriptDir, workflowRunId }) {
-  const children = readWorkflowChildren(transcriptDir);
-  if (children.length === 0) return 0;
-  const runKey = workflowRunId ?? spawn.toolUseId;
-  // A forked session repeats its parent's history, so the same Workflow can appear under two
-  // sessions. Children go wherever the parent row already lives.
-  const runId = store.prepare("SELECT run_id FROM nodes WHERE id = ?").get(spawn.toolUseId)?.run_id ?? spawn.sessionId;
-  const upsert = store.prepare(
-    `INSERT INTO nodes
-       (id, run_id, parent_node_id, tool, agent_type, label, model, started_at, ended_at, status,
-        duration_ms, true_duration_ms, agent_id, is_async, active_segments, billed_usage)
-     VALUES (?, ?, ?, 'Agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-     ON CONFLICT (id) DO UPDATE SET
-       run_id           = excluded.run_id,
-       parent_node_id   = excluded.parent_node_id,
-       agent_type       = excluded.agent_type,
-       label            = excluded.label,
-       model            = excluded.model,
-       ended_at         = excluded.ended_at,
-       status           = excluded.status,
-       duration_ms      = excluded.duration_ms,
-       true_duration_ms = excluded.true_duration_ms,
-       active_segments  = excluded.active_segments,
-       billed_usage     = excluded.billed_usage`,
-  );
-  for (const child of children) {
-    upsert.run(
+function workflowOwners(store, group, runKey) {
+  // A forked session repeats its parent's history, so a Workflow's children go wherever its row lives.
+  const owners = group.map(({ spawn }) => ({
+    toolUseId: spawn.toolUseId,
+    startedAt: spawn.startedAt,
+    runId: store.prepare("SELECT run_id FROM nodes WHERE id = ?").get(spawn.toolUseId)?.run_id ?? spawn.sessionId,
+  }));
+  const knownIds = new Set(owners.map((owner) => owner.toolUseId));
+  const recorded = store
+    .prepare(
+      `SELECT DISTINCT parent.id AS toolUseId, parent.started_at AS startedAt, parent.run_id AS runId
+         FROM nodes child JOIN nodes parent ON parent.id = child.parent_node_id
+        WHERE child.id LIKE ?`,
+    )
+    .all(`wf:${runKey}:%`)
+    .filter((owner) => !knownIds.has(owner.toolUseId));
+  return [...owners, ...recorded].sort((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt));
+}
+
+/** The latest Workflow call that had started when the agent did; a resumed run owns only what it ran. */
+function ownerOf(child, owners) {
+  let owner = owners[0];
+  for (const candidate of owners) {
+    if (Date.parse(candidate.startedAt) <= Date.parse(child.startedAt)) owner = candidate;
+  }
+  return owner;
+}
+
+function upsertWorkflowChild(store, { child, runKey, owner }) {
+  store
+    .prepare(
+      `INSERT INTO nodes
+         (id, run_id, parent_node_id, tool, agent_type, label, model, started_at, ended_at, status,
+          duration_ms, true_duration_ms, agent_id, is_async, active_segments, billed_usage)
+       VALUES (?, ?, ?, 'Agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET
+         run_id           = excluded.run_id,
+         parent_node_id   = excluded.parent_node_id,
+         agent_type       = excluded.agent_type,
+         label            = excluded.label,
+         model            = excluded.model,
+         ended_at         = excluded.ended_at,
+         status           = excluded.status,
+         duration_ms      = excluded.duration_ms,
+         true_duration_ms = excluded.true_duration_ms,
+         active_segments  = excluded.active_segments,
+         billed_usage     = excluded.billed_usage`,
+    )
+    .run(
       `wf:${runKey}:${child.agentId}`,
-      runId,
-      spawn.toolUseId,
+      owner.runId,
+      owner.toolUseId,
       child.agentType,
       child.label,
       child.model,
@@ -357,17 +392,40 @@ function insertWorkflowChildren(store, { spawn, transcriptDir, workflowRunId }) 
       JSON.stringify(child.segments),
       usageJson(child.usage),
     );
+}
+
+/**
+ * One node per agent a Workflow ran, parented to the one Workflow call that ran it, so a resumed
+ * run and its original never both count an agent. Each call's duration is the union of its agents'
+ * active spans and its spend the sum of their usage, scaled by `billed_share` when some agents left
+ * no transcript. Returns the agent count.
+ */
+function insertWorkflowChildren(store, group) {
+  const { transcriptDir } = group[0];
+  const children = readWorkflowChildren(transcriptDir);
+  if (children.length === 0) return 0;
+  const runKey = group[0].workflowRunId ?? group[0].spawn.toolUseId;
+  const owners = workflowOwners(store, group, runKey);
+  const ownedChildren = new Map(owners.map((owner) => [owner.toolUseId, []]));
+  for (const child of children) {
+    const owner = ownerOf(child, owners);
+    upsertWorkflowChild(store, { child, runKey, owner });
+    ownedChildren.get(owner.toolUseId).push(child);
   }
   const billedChildren = children.filter((child) => usageJson(child.usage)).length;
   const agentCount = Math.max(countWorkflowAgents(transcriptDir), children.length);
-  store
-    .prepare("UPDATE nodes SET true_duration_ms = ?, billed_usage = ?, billed_share = ? WHERE id = ?")
-    .run(
-      unionMs(children.flatMap((child) => child.segments)),
-      usageJson(mergeUsage(children.map((child) => child.usage))),
-      billedChildren < agentCount ? billedChildren / agentCount : null,
-      spawn.toolUseId,
+  const share = billedChildren < agentCount ? billedChildren / agentCount : null;
+  const updateParent = store.prepare(
+    "UPDATE nodes SET true_duration_ms = ?, billed_usage = ?, billed_share = ? WHERE id = ?",
+  );
+  for (const [ownerId, owned] of ownedChildren) {
+    updateParent.run(
+      unionMs(owned.flatMap((child) => child.segments)),
+      JSON.stringify(mergeUsage(owned.map((child) => child.usage))),
+      share,
+      ownerId,
     );
+  }
   return children.length;
 }
 
@@ -546,8 +604,8 @@ for (const path of transcriptPaths()) {
 }
 
 let importedWorkflowAgents = 0;
-for (const parent of workflowParents.values()) {
-  importedWorkflowAgents += insertWorkflowChildren(store, parent);
+for (const group of groupByTranscriptDir(workflowParents.values())) {
+  importedWorkflowAgents += insertWorkflowChildren(store, group);
 }
 const billedNodes = applyBilledUsage(store, pendingBillings, mainThreadMessageIds);
 // Teammate messages were once filed as the lead's when the entry named the agent but carried no id.

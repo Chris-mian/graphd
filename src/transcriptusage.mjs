@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { emptyUsage } from "./pricing.mjs";
+import { emptyUsage, pricedModelKey } from "./pricing.mjs";
 
 /** The harness writes placeholder assistant turns under this model; they bill nothing. */
 const SYNTHETIC_MODEL = "<synthetic>";
@@ -18,45 +18,58 @@ function singleUsageCounts(usage) {
   };
 }
 
-/** One response's billed counts; a response of several iterations reports only the last at top level. */
-function usageCounts(usage) {
-  const iterations = Array.isArray(usage.iterations) ? usage.iterations : [];
-  if (iterations.length <= 1) return singleUsageCounts(usage);
-  const summed = singleUsageCounts({});
-  for (const iteration of iterations) {
-    for (const [field, count] of Object.entries(singleUsageCounts(iteration))) summed[field] += count;
-  }
-  return summed;
+function promptTokens(counts) {
+  return counts.input + counts.cacheWrite5m + counts.cacheWrite1h + counts.cacheRead;
+}
+
+/**
+ * One response's billed counts as `[pricedModel, counts]` pairs. A response of several iterations
+ * reports only the last at top level, so its iterations are read one by one, each under its own
+ * model when a fallback changed it.
+ */
+function responseUsage(message) {
+  const iterations = Array.isArray(message.usage.iterations) ? message.usage.iterations : [];
+  const parts = iterations.length > 1 ? iterations : [message.usage];
+  return parts.map((part) => {
+    const model = part.model ?? message.model;
+    const counts = singleUsageCounts(part);
+    return [pricedModelKey(model, promptTokens(counts)), counts];
+  });
+}
+
+function totalOutput(pairs) {
+  return pairs.reduce((sum, [, counts]) => sum + counts.output, 0);
 }
 
 /**
  * Billed counts per response in a transcript, keyed by message id. One response is written as
  * several entries sharing an id, with the same input counts and a growing output count, so each
- * id keeps its largest output.
+ * id keeps the entry with the largest output.
  */
 export function messageUsage(entries) {
-  const countsByMessage = new Map();
+  const usageByMessage = new Map();
   for (const entry of entries) {
     if (entry.type !== "assistant") continue;
     const { message } = entry;
     if (!message?.usage || !message.model || message.model === SYNTHETIC_MODEL) continue;
     const messageKey = message.id ?? entry.uuid;
-    const counts = usageCounts(message.usage);
-    const seen = countsByMessage.get(messageKey);
-    if (seen) seen.counts.output = Math.max(seen.counts.output, counts.output);
-    else countsByMessage.set(messageKey, { model: message.model, counts });
+    const pairs = responseUsage(message);
+    const seen = usageByMessage.get(messageKey);
+    if (!seen || totalOutput(pairs) > totalOutput(seen)) usageByMessage.set(messageKey, pairs);
   }
-  return countsByMessage;
+  return usageByMessage;
 }
 
 /** Per-response counts summed by model, skipping ids in `excludedMessageIds`. */
-export function aggregateUsage(countsByMessage, excludedMessageIds = new Set()) {
+export function aggregateUsage(usageByMessage, excludedMessageIds = new Set()) {
   const byModel = {};
-  for (const [messageKey, { model, counts }] of countsByMessage) {
+  for (const [messageKey, pairs] of usageByMessage) {
     if (excludedMessageIds.has(messageKey)) continue;
-    const total = (byModel[model] ??= emptyUsage());
-    for (const [field, count] of Object.entries(counts)) total[field] += count;
-    total.turns += 1;
+    pairs.forEach(([model, counts], index) => {
+      const total = (byModel[model] ??= emptyUsage());
+      for (const [field, count] of Object.entries(counts)) total[field] += count;
+      if (index === 0) total.turns += 1;
+    });
   }
   return byModel;
 }

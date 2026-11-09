@@ -11,7 +11,7 @@ import {
   shapeNodes,
   spendNodes,
 } from "./analysis.mjs";
-import { nodeCost, nodeTokens, pricingBasis } from "./pricing.mjs";
+import { nodeCost, nodeTokens, pricingBasis, reportedModel } from "./pricing.mjs";
 
 const MULTI_AGENT_THRESHOLD = 2;
 const TOP_LIST_LENGTH = 8;
@@ -148,7 +148,7 @@ export function computeStats(store) {
     sequentialSerializedMs: sequential.reduce((sum, entry) => sum + entry.serializedMs, 0),
     sequentialCostUsd: sequential.reduce((sum, entry) => sum + entry.costUsd, 0),
     byAgentType: tallyBy(allNodes, agentTypeLabel).slice(0, TOP_LIST_LENGTH),
-    byModel: tallyBy(allNodes, (node) => node.resolved_model ?? node.model).slice(0, TOP_LIST_LENGTH),
+    byModel: tallyBy(allNodes, reportedModel).slice(0, TOP_LIST_LENGTH),
     byWorkflowAgentType: tallyBy(workflowAgents, agentTypeLabel)
       .sort((left, right) => right.count - left.count)
       .slice(0, TOP_LIST_LENGTH),
