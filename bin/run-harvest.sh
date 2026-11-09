@@ -22,7 +22,7 @@ log() {
   printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" >>"$LOG_FILE"
 }
 
-# A failed run otherwise looks like a quiet week, so it files a decision card. The id carries the
+# A run that produced no harvest otherwise looks like a quiet week, so it files a decision card. The id carries the
 # date, so a re-run that fails again the same day is a no-op.
 file_failure_decision() {
   local run_date failure_file
@@ -30,7 +30,7 @@ file_failure_decision() {
   failure_file="${LOG_DIR}/harvest-failed-${run_date}.json"
   tail -n 5 "$LOG_FILE" | jq -Rs --arg id "harvest-failed-${run_date}" '
     (split("\n") | map(select(length > 0))) as $lines
-    | ($lines | map(select(test("error|failed|expired|timed out"; "i"))) | first // $lines[-1] // "unknown error") as $first
+    | ($lines | map(select(test("harvest exited") | not)) | map(select(test("error|failed|expired|timed out"; "i"))) | last // $lines[-1] // "unknown error") as $first
     | {proposals: [{
         id: $id,
         kind: "question",
@@ -38,7 +38,7 @@ file_failure_decision() {
         why: "The weekly /lesson-harvest run exited non-zero, so this week has no report or proposals.",
         evidence: ($lines | join("\n")),
         applies: {type: "manual", note: "Re-run /lesson-harvest, or fix the cause in the evidence first."}
-      }]}' >"$failure_file" || return 0
+      }]}' >"$failure_file" || { log "could not build the failure decision"; return 0; }
   "$REPO_DIR/bin/graph.mjs" propose "$failure_file" >>"$LOG_FILE" 2>&1 || log "could not file the failure decision"
 }
 
@@ -46,6 +46,7 @@ log "harvest starting"
 
 "$REPO_DIR/bin/graph-import.mjs" "$IMPORT_WINDOW_DAYS" >>"$LOG_FILE" 2>&1 || {
   log "import failed, skipping harvest"
+  file_failure_decision
   exit 0
 }
 
@@ -68,6 +69,7 @@ done
 # half-write a new one.
 if [[ -z "$claude_bin" ]]; then
   log "no claude binary found, skipping harvest"
+  file_failure_decision
   exit 0
 fi
 log "using ${claude_bin} ($("$claude_bin" --version 2>/dev/null || echo 'version unknown'))"
@@ -93,6 +95,10 @@ kill "$watchdog_pid" 2>/dev/null
 if [[ "$harvest_status" -eq 0 ]]; then
   log "harvest finished"
 else
+  # 143 is the watchdog's SIGTERM; the model prints nothing when it is killed.
+  if [[ "$harvest_status" -eq 143 ]]; then
+    log "harvest timed out after ${HARVEST_TIMEOUT_SECONDS}s"
+  fi
   log "harvest exited ${harvest_status} — see the lines above for the model's own error"
   file_failure_decision
 fi

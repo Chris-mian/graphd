@@ -67,9 +67,12 @@ const CHALLENGE_PATTERNS = [
   /\bwhat do you mean\b/i,
   /^(?:\d+[.)]\s*)?i (?:do ?n['’]?t|do not) (?:really |fully )?agree\b/im,
   /^(?:\d+[.)]\s*)?that['’]?s not\b/im,
-  /\bwhy (?:is|does|do|would) (?:this|that|it|we) (?:an? )?\w+(?: \w+)?\?/i,
-  /\bstill (?:too|not)\b/i,
-  /\b(?:too (?:long|detailed|verbose)|not enough|no (?:meaning|point) (?:to|in))\b/i,
+  /\bwhy (?:is|would|does) (?:this|that|it) (?:an? )?(?:bug|problem|issue|needed|necessary|required|still here|need)\b/i,
+  /\bstill too\b/i,
+  /\bstill not (?:fully |quite )?(?:right|fixed|correct|matching|clear|what|working)\b/i,
+  /\btoo (?:long|detailed|verbose)\b/i,
+  /\bnot enough (?:high[- ]level|detail|context|structure|explanation)\b/i,
+  /\bno (?:meaning|point) (?:to|in)\b/i,
 ];
 const CHALLENGE_TURN_LENGTH = 400;
 
@@ -83,8 +86,8 @@ const SELF_CORRECTION_PATTERNS = [
   /\bmy earlier\s+[^.!?]{1,60}?\s(?:was|were)\s+wrong\b/i,
   /\bthat (claim|number|statement) was (wrong|bogus|incorrect)\b/i,
   /\bscratch that\b/i,
-  /\bcorrection to my\b/i,
-  /\bcorrection to the [^.!?:\n]{1,40}:/i,
+  /^(?:[-*#>\s]|\*\*)*correction to my\b/i,
+  /^(?:[-*#>\s]|\*\*)*correction to the [^.!?:\n]{1,40}:/i,
 ];
 
 /**
@@ -168,8 +171,15 @@ function replyBody(raw) {
     index += 1;
   }
   const body = lines.slice(index).join("\n").trim();
-  const quote = quoted.join("\n").trim();
-  return quote && body.startsWith(quote) ? body.slice(quote.length).trim() : body;
+  const quoteWords = quoted.join(" ").split(/\s+/).filter(Boolean);
+  if (quoteWords.length === 0) return body;
+  // Line breaks in the repeat need not match the quote's, so compare word by word.
+  const repeat = new RegExp(`^${quoteWords.map(escapeRegExp).join("\\s+")}`);
+  return body.replace(repeat, "").trim();
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Strips romp prompt wrappers and injected blocks, leaving what the human actually typed. */
