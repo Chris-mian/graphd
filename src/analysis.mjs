@@ -84,15 +84,20 @@ export function unionMs(segments) {
   return open ? total + (open[1] - open[0]) : total;
 }
 
+/** A spawn the harness refused before any agent started, such as a policy deny. */
+export function isRejected(node) {
+  return node.status === "rejected";
+}
+
 /** Nodes as they ran: a Workflow with recorded children is replaced by its children. */
 export function shapeNodes(nodes) {
   const parentIds = new Set(nodes.map((node) => node.parent_node_id).filter(Boolean));
-  return nodes.filter((node) => !parentIds.has(node.id));
+  return nodes.filter((node) => !parentIds.has(node.id) && !isRejected(node));
 }
 
 /** Nodes that carry spend: a Workflow's children are dropped, since the Workflow holds the tokens. */
 export function spendNodes(nodes) {
-  return nodes.filter((node) => !node.parent_node_id);
+  return nodes.filter((node) => !node.parent_node_id && !isRejected(node));
 }
 
 /**
@@ -192,6 +197,8 @@ const MERGEABLE_FIELDS = [
   "ended_at",
   "duration_ms",
   "total_tokens",
+  "billed_usage",
+  "billed_share",
   "tool_use_count",
   "task_id",
   "output_file",

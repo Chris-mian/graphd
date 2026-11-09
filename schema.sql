@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   prompt_sha     TEXT,
   started_at     TEXT NOT NULL,
   ended_at       TEXT,                             -- when the TOOL CALL returned
-  status         TEXT NOT NULL DEFAULT 'running',  -- running|ok|error|unknown
+  status         TEXT NOT NULL DEFAULT 'running',  -- running|ok|error|unknown|rejected|async_launched|completed|teammate_spawned
   duration_ms    INTEGER,
   agent_id       TEXT,
   resolved_model TEXT,
@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS nodes (
   prompt_text    TEXT,
   result_text    TEXT,
   -- JSON [[startMs, endMs], ...]: when a Workflow's agent was working, gaps of idle time removed.
-  active_segments TEXT
+  active_segments TEXT,
+  billed_usage   TEXT,                             -- JSON {model: {input, cacheWrite5m, cacheWrite1h, cacheRead, output, turns}} from the agent's transcript
+  billed_share   REAL                              -- Workflow only: share of its agents with a transcript, when under 1
 );
 
 CREATE INDEX IF NOT EXISTS nodes_run_idx ON nodes (run_id, started_at);

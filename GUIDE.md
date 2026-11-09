@@ -232,16 +232,17 @@ tunnel path itself is untested.
 
 ## Limits — read this before trusting a number
 
-- **Spend is a floor, not a bill.** 194 of 324 recorded agents carry token counts; older
-  transcripts predate the field. Cost is estimated from published rates with an assumed 90% input
-  split, not billed.
+- **Spend is list price, and exact only where a transcript survived.** Each agent's turns are
+  summed from its own transcript and priced cache-aware. Agents whose transcripts were already
+  deleted keep an estimate on the harness's final-context total, which runs roughly an order of
+  magnitude under; `graph stats` prints how many are which.
 - **Interventions per session is a floor too.** Every time you shrugged and fixed something
   yourself, there's no transcript signal. Invisible by construction.
 - **Observed edges are timing-derived, not real dependencies.** Only a Workflow's own agents
   are linked to their parent; elsewhere "B waited on A" means "A had finished when B started".
   Good enough to separate a chain from a fan-out; not a true dependency graph.
 - **Workflow agents' time is active time, estimated.** Pauses over five minutes with no tool call
-  open are dropped as idle. The Workflow's spend is the runtime's total, not a sum of its agents.
+  open are dropped as idle. The Workflow's spend is the sum of its agents' transcript usage.
 - **`implement-verify` runs in `verify-only` mode.** Parallel-implement mode is still
   unexercised and stays off unless asked for by name.
 - **Unmeasurable nodes are excluded, never assumed.** An async node with no notification makes

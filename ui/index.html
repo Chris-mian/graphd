@@ -375,7 +375,7 @@ function renderOrchestration(detail) {
       <td>${clock(node.started_at)}</td>
       <td>${nodeEndIso(node) ? clock(nodeEndIso(node)) : "<span style='color:var(--warning)'>unknown</span>"}</td>
       <td>${workMs === null ? "–" : seconds(workMs)}</td>
-      <td>${node.total_tokens ? node.total_tokens.toLocaleString() : "–"}</td>
+      <td>${node.tokens ? node.tokens.toLocaleString() : "–"}</td>
       <td>${nodeCost(node)}</td>
     </tr>
     <tr class="node-detail" data-detail="${node.id}" hidden><td colspan="9">
@@ -466,7 +466,7 @@ function renderTimeline(detail) {
         `<b>${escapeHtml(node.label ?? node.tool)}</b><br>` +
           `${escapeHtml(node.agent_type ?? "–")} · ${escapeHtml(node.resolved_model ?? node.model ?? "inherited")}<br>` +
           `${escapeHtml(node.status)} · ${seconds(node.duration_ms)}` +
-          `${node.total_tokens ? ` · ${node.total_tokens.toLocaleString()} tokens · ${money(node.costUsd)}` : ""}` +
+          `${node.tokens ? ` · ${node.tokens.toLocaleString()} tokens · ${nodeCost(node)}` : ""}` +
           `${node.tool_use_count ? ` · ${node.tool_use_count} tool calls` : ""}` +
           `<br><span class="mono">${escapeHtml(node.agent_id ?? node.id)}</span>`,
       ),

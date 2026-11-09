@@ -126,3 +126,48 @@ test("stats keep a Workflow run's shape as a Workflow step and tally its agents 
   assert.deepEqual(stats.byWorkflowAgentType.map((bucket) => [bucket.key, bucket.count]), [["impl-pressure-tester", 3]]);
   assert.ok(!stats.byAgentType.some((bucket) => bucket.key === "impl-pressure-tester"));
 });
+
+const BILLED_ONE_MILLION_INPUT = JSON.stringify({
+  "claude-opus-5-5": { input: 1_000_000, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, output: 0, turns: 3 },
+});
+
+function storeWithBilledAndRejected() {
+  const store = openStore(":memory:");
+  const insert = store.prepare(
+    `INSERT INTO nodes (id, run_id, tool, started_at, ended_at, status, duration_ms, total_tokens,
+       resolved_model, billed_usage)
+     VALUES (?, ?, 'Agent', ?, ?, ?, 60000, ?, 'claude-opus-5-5', ?)`,
+  );
+  for (const runId of [RUN_ID, "run-rejected-only"]) {
+    store.prepare("INSERT INTO runs (id, session_id, started_at) VALUES (?, ?, ?)").run(runId, runId, iso(0));
+  }
+  insert.run("toolu_billed", RUN_ID, iso(0), iso(MINUTE_MS), "ok", 50_000, BILLED_ONE_MILLION_INPUT);
+  insert.run("toolu_context", RUN_ID, iso(0), iso(MINUTE_MS), "ok", 1_000_000, null);
+  insert.run("toolu_denied", RUN_ID, iso(0), iso(0), "rejected", null, null);
+  insert.run("toolu_denied_alone", "run-rejected-only", iso(0), iso(0), "rejected", null, null);
+  return store;
+}
+
+test("a rejected spawn is in neither the shape view nor the spend view", () => {
+  const rejected = { id: "toolu_x", tool: "Agent", parent_node_id: null, status: "rejected" };
+  assert.deepEqual(shapeNodes([lead, rejected]), [lead]);
+  assert.deepEqual(spendNodes([lead, rejected]), [lead]);
+});
+
+test("run list, run detail, stats and projects read billed usage, not the harness total", () => {
+  const store = storeWithBilledAndRejected();
+  const [run] = listRuns(store);
+  assert.equal(run.totalTokens, 2_000_000);
+  const detail = getRun(store, RUN_ID);
+  const billed = detail.nodes.find((node) => node.id === "toolu_billed");
+  assert.equal(billed.tokens, 1_000_000);
+  assert.equal(billed.costUsd, 4);
+  assert.equal(billed.pricingBasis, "billed");
+
+  const stats = computeStats(store);
+  assert.equal(stats.runCount, 1, "a run whose only spawn was rejected is not a run");
+  assert.equal(stats.rejectedCount, 2);
+  assert.deepEqual(stats.pricingCoverage, { billed: 1, partial: 0, context: 1, none: 0 });
+  assert.equal(stats.totalTokens, 2_000_000);
+  assert.equal(spendByProject(store, "/nonexistent/picks.db").unattributedTokens, 2_000_000);
+});

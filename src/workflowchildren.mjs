@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { unionMs } from "./analysis.mjs";
+import { usageByModel } from "./transcriptusage.mjs";
 
 export { unionMs };
 
@@ -100,7 +101,8 @@ export function readWorkflowChildren(transcriptDir) {
     } catch {
       // An unreadable meta file still leaves the transcript's timing.
     }
-    const points = activityPoints(readJsonLines(join(transcriptDir, `agent-${agentId}.jsonl`)));
+    const entries = readJsonLines(join(transcriptDir, `agent-${agentId}.jsonl`));
+    const points = activityPoints(entries);
     if (points.length === 0) continue;
     const segments = activeSegments(points);
     children.push({
@@ -113,7 +115,14 @@ export function readWorkflowChildren(transcriptDir) {
       activeMs: unionMs(segments),
       segments,
       isFinished: finishedAgentIds.has(agentId),
+      usage: usageByModel(entries),
     });
   }
   return children;
+}
+
+/** How many agents a Workflow's transcript directory has meta for, transcript or not. */
+export function countWorkflowAgents(transcriptDir) {
+  if (!transcriptDir || !statSync(transcriptDir, { throwIfNoEntry: false })?.isDirectory()) return 0;
+  return readdirSync(transcriptDir).filter((fileName) => AGENT_FILE_PATTERN.test(fileName)).length;
 }

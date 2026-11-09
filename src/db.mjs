@@ -20,6 +20,8 @@ const NODE_RESULT_COLUMNS = [
   ["prompt_text", "TEXT"],
   ["result_text", "TEXT"],
   ["active_segments", "TEXT"],
+  ["billed_usage", "TEXT"],
+  ["billed_share", "REAL"],
 ];
 
 const SESSION_COLUMNS = [["turn_count", "INTEGER NOT NULL DEFAULT 0"]];
