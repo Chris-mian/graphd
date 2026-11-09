@@ -22,6 +22,26 @@ log() {
   printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" >>"$LOG_FILE"
 }
 
+# A failed run otherwise looks like a quiet week, so it files a decision card. The id carries the
+# date, so a re-run that fails again the same day is a no-op.
+file_failure_decision() {
+  local run_date failure_file
+  run_date="$(date -u '+%Y-%m-%d')"
+  failure_file="${LOG_DIR}/harvest-failed-${run_date}.json"
+  tail -n 5 "$LOG_FILE" | jq -Rs --arg id "harvest-failed-${run_date}" '
+    (split("\n") | map(select(length > 0))) as $lines
+    | ($lines | map(select(test("error|failed|expired|timed out"; "i"))) | first // $lines[-1] // "unknown error") as $first
+    | {proposals: [{
+        id: $id,
+        kind: "question",
+        title: ("Scheduled harvest failed: " + ($first | .[0:120])),
+        why: "The weekly /lesson-harvest run exited non-zero, so this week has no report or proposals.",
+        evidence: ($lines | join("\n")),
+        applies: {type: "manual", note: "Re-run /lesson-harvest, or fix the cause in the evidence first."}
+      }]}' >"$failure_file" || return 0
+  "$REPO_DIR/bin/graph.mjs" propose "$failure_file" >>"$LOG_FILE" 2>&1 || log "could not file the failure decision"
+}
+
 log "harvest starting"
 
 "$REPO_DIR/bin/graph-import.mjs" "$IMPORT_WINDOW_DAYS" >>"$LOG_FILE" 2>&1 || {
@@ -74,4 +94,5 @@ if [[ "$harvest_status" -eq 0 ]]; then
   log "harvest finished"
 else
   log "harvest exited ${harvest_status} — see the lines above for the model's own error"
+  file_failure_decision
 fi
