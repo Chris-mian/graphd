@@ -143,10 +143,11 @@ test("subagent meta resolves a top-level agent and ignores workflow agents and m
 
 const ONE_MILLION_CACHE_READS = { input: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 1_000_000, output: 0, turns: 1 };
 
-test("a model without its own read rate reads cache at 0.1x input; Sonnet 5.5 at its published 0.05x", () => {
+test("a model without its own read rate reads cache at 0.1x input; Opus 5.5 and Fable 5.1 at their published rates", () => {
   assert.equal(usageCost({ "claude-opus-5": ONE_MILLION_CACHE_READS }), 0.5);
   assert.equal(usageCost({ "claude-sonnet-5": ONE_MILLION_CACHE_READS }), 0.2);
-  assert.equal(usageCost({ "claude-sonnet-5-5": ONE_MILLION_CACHE_READS }), 0.1);
+  assert.equal(usageCost({ "claude-sonnet-5-5": ONE_MILLION_CACHE_READS }), 0.2);
+  assert.equal(usageCost({ "claude-fable-5-1": ONE_MILLION_CACHE_READS }), 0.25);
 });
 
 test("each cache write duration has its own multiplier", () => {

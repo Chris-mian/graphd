@@ -142,6 +142,19 @@ test("each agent is billed from its own transcript, and re-importing does not ac
   assert.equal(nodes.get("toolu_mate").resolved_model, "claude-opus-5-5");
 });
 
+test("a teammate bills its transcript's spawn, not a hook row of the same name filed just after it", () => {
+  const fixture = billingFixture();
+  runImport(fixture);
+  const store = openFixtureStore(fixture.stateDir);
+  store.prepare("UPDATE nodes SET billed_usage = NULL WHERE id = 'toolu_mate'").run();
+  store
+    .prepare("INSERT INTO nodes (id, run_id, tool, name, started_at, status) VALUES ('hook-mate', ?, 'Agent', 'helper', ?, 'running')")
+    .run(SESSION_ID, at(21));
+  store.close();
+  runImport(fixture);
+  assert.equal(billedTurns(nodesById(fixture.stateDir).get("toolu_mate")), 1);
+});
+
 test("a spawn answered with an error string is rejected, keeps its reason, and bills nothing", () => {
   const fixture = billingFixture();
   runImport(fixture);

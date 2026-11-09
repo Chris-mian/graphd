@@ -38,7 +38,7 @@ export const DEFAULT_MODEL_RATES = {
   "claude-opus-4-5": { input: 5, output: 25 },
   "claude-opus-4-1": { input: 15, output: 75 },
   "claude-opus-4": { input: 15, output: 75 },
-  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.1 },
+  "claude-sonnet-5-5": { input: 2, output: 10 },
   "claude-sonnet-5": { input: 2, output: 10 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
   "claude-sonnet-4-5": { input: 3, output: 15 },

@@ -436,7 +436,8 @@ function usageJson(usage) {
 
 /**
  * The node a top-level subagent transcript belongs to: its spawning tool_use id, or for a
- * teammate (which has none) the latest same-named node in its session that started before it.
+ * teammate (which has none) the latest same-named Agent spawn in its session that started before
+ * it. Hook rows are skipped: they start after the tool_use and are pruned in favour of it.
  */
 function billedNodeId(store, { meta, firstAt }) {
   if (meta.toolUseId) {
@@ -448,6 +449,7 @@ function billedNodeId(store, { meta, firstAt }) {
       .prepare(
         `SELECT id FROM nodes
           WHERE run_id = ? AND name = ? AND parent_node_id IS NULL AND started_at <= ?
+            AND id LIKE 'toolu\\_%' ESCAPE '\\' AND tool = 'Agent' AND status IS NOT 'rejected'
           ORDER BY started_at DESC LIMIT 1`,
       )
       .get(meta.sessionId, meta.name, firstAt)?.id ?? null
