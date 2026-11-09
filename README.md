@@ -182,10 +182,19 @@ overlapped, so human thinking time is excluded), average agents at once (summed 
 time with at least one agent running), token spend per agent type and model, and repeated
 agent-type shapes that are harvest candidates.
 
-Cost is an estimate. Agent results report one combined `totalTokens`, so `src/pricing.mjs` splits it
-at an assumed 90% input share against published per-model rates and also exposes all-input and
-all-output bounds. Nodes whose transcript predates `totalTokens` contribute zero, making totals a
-floor rather than a full accounting.
+Cost comes from each agent's own transcript. Every assistant turn under
+`<session>/subagents/agent-<id>.jsonl` records its input, cache writes (5-minute and 1-hour), cache
+reads and output, and the importer sums those per model into `nodes.billed_usage`, joined to the
+node through the `toolUseId` in the agent's `.meta.json` (a teammate has none and joins on its
+name). `src/pricing.mjs` prices that at list rates, cache-aware, so a billed node's bounds collapse
+onto one figure. A Workflow carries the sum of its agents' usage.
+
+The harness's own `totalTokens` is **not** a spend figure: it is the agent's last turn — its final
+context size. Summed over turns an agent bills 3–46× that, three quarters or more of it cache
+reads. A node with no transcript left (Claude Code deletes old transcripts) keeps the old estimate
+on that total, which understates it badly; `graph stats` prints how many agents fall in each case.
+A spawn the harness refused before it started (a policy deny) is stored as `rejected` and counted
+in neither shape nor spend.
 
 ## Learning loop
 
@@ -267,19 +276,17 @@ whatever CLI version is installed and fails the whole run with a 400 when it doe
   which is deliberate — it is what makes a real fan-out visibly edgeless, and `delegationBatches`
   reads that shape. `parent_node_id` is populated only for the agents a Workflow ran; an agent's
   own spawns under `<session>/subagents/` could be linked the same way, but that is unbuilt.
-- A Workflow's spend is the runtime's `subagent_tokens` total, and is not cross-checked against its
-  agents' own usage. Its agents carry timing only.
+- A Workflow's spend is the sum of its agents' transcript usage; `billed_share` records the share
+  of its agents that left a transcript when some did not, and the estimate scales up by it.
 - A Workflow agent's active time is a heuristic: a pause over five minutes with no tool call open
   counts as idle. Its active segments are stored, and peak concurrency and average agents at once
   read those, so an agent suspended mid-run does not count the suspension. Its `ended_at` is still
   its last entry, which is what timing-derived edges and the timeline use.
-- Spend is a floor. Token counts arrive as one total per node with no input/output split, so
-  `graph stats` prices at an assumed 90% input share and prints the all-input/all-output bounds
-  beside the estimate.
-- Roughly half of nodes still contribute zero to spend. A background agent's accounting arrives
-  in its task notification's `<usage>` block, which the importer now reads, but a teammate spawn
-  produces no notification in this store and a node the hook opened and nothing closed has no
-  result at all.
+- Spend is list price at standard context. The long-context premium on `[1m]` models is not
+  modelled, because a transcript's `message.model` does not say which context the turn ran in.
+- Spend is exact only while a transcript survives. Claude Code deletes transcripts after its
+  retention period; the hourly import records usage before that, but agents from sessions already
+  deleted can only be estimated from the harness total, or not priced at all.
 - The autonomy denominator is assistant turns, not clock time. Wall-clock between a session's
   first and last message counts the days a resumed session sat idle, which put one week at 1271
   hours across 2 sessions.
