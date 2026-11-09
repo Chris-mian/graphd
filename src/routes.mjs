@@ -22,7 +22,7 @@ import {
   spendNodes,
   topologyDiff,
 } from "./analysis.mjs";
-import { estimateCost } from "./pricing.mjs";
+import { nodeCost, nodeTokens, pricingBasis } from "./pricing.mjs";
 
 const DEFAULT_RUN_LIMIT = 50;
 const PROMPT_SHA_ALGORITHM = "sha256";
@@ -158,7 +158,7 @@ export function listRuns(store, limit = DEFAULT_RUN_LIMIT) {
     return {
       ...run,
       node_count: ranNodes.length,
-      totalTokens: spendNodes(nodes).reduce((sum, node) => sum + (node.total_tokens ?? 0), 0),
+      totalTokens: spendNodes(nodes).reduce((sum, node) => sum + nodeTokens(node), 0),
       parallelism: parallelismReport(ranNodes),
       ...topologyDiff({ declaredShape: run.declared_shape, nodes: ranNodes }),
     };
@@ -225,10 +225,10 @@ export function getRun(store, runIdOrPrefix) {
     run,
     nodes: nodes.map((node) => ({
       ...node,
-      // A Workflow's agents are priced on the Workflow, which holds the runtime's total for them.
-      costUsd: node.parent_node_id
-        ? 0
-        : estimateCost({ totalTokens: node.total_tokens, model: node.resolved_model ?? node.model }).estimate,
+      // A Workflow's agents are priced on the Workflow, which holds the sum of their usage.
+      costUsd: node.parent_node_id ? 0 : nodeCost(node).estimate,
+      tokens: nodeTokens(node),
+      pricingBasis: pricingBasis(node),
     })),
     edges: [...declaredEdges, ...observedEdges(ranNodes)],
     diff: topologyDiff({ declaredShape: run.declared_shape, nodes: ranNodes }),

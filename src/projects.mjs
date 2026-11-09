@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { dedupeNodes, spendNodes } from "./analysis.mjs";
+import { nodeTokens } from "./pricing.mjs";
 
 export const PICKS_DB_PATH =
   process.env.GRAPHD_SPINE_PICKS_PATH ??
@@ -75,7 +76,7 @@ function spendBySession(store) {
   for (const node of spendNodes(dedupeNodes(nodes))) {
     const session = bySession.get(node.session_id) ?? { sessionId: node.session_id, nodeCount: 0, tokens: 0 };
     session.nodeCount += 1;
-    session.tokens += node.total_tokens ?? 0;
+    session.tokens += nodeTokens(node);
     bySession.set(node.session_id, session);
   }
   return [...bySession.values()];

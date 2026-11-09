@@ -90,7 +90,7 @@ function printRunDetail(detail) {
     );
   }
   for (const node of nodes) {
-    const tokens = node.total_tokens ? ` ${node.total_tokens.toLocaleString()}tok` : "";
+    const tokens = node.tokens ? ` ${node.tokens.toLocaleString()}tok` : "";
     const workedMs = node.true_duration_ms ?? (node.is_async ? null : node.duration_ms);
     const batch = batchOf.get(node.id);
     const fanout = batch && batch.size > 1 ? `b${batch.index + 1}x${batch.size}` : "  solo ";
@@ -177,6 +177,20 @@ function printProjectSpend(projectSpend) {
   );
 }
 
+/** Which agents' spend is exact and which is a guess, so the headline figure can be weighed. */
+function pricingCoverageLine({ pricingCoverage, rejectedCount }) {
+  if (!pricingCoverage) return "";
+  const { billed, partial, context, none } = pricingCoverage;
+  return (
+    `priced  ${billed} billed from their transcripts at list price` +
+    (partial ? `, ${partial} Workflows partly` : "") +
+    `; ${context} from the harness total only (a final context size, ~an order of magnitude under spend)` +
+    `; ${none} unpriced (transcript gone or never ran)` +
+    (rejectedCount ? `; ${rejectedCount} rejected spawns excluded` : "") +
+    "\n"
+  );
+}
+
 function printStats(stats) {
   process.stdout.write(
     `runs=${stats.runCount} agents=${stats.nodeCount} (+${stats.workflowAgentCount ?? 0} inside workflows) ` +
@@ -185,9 +199,9 @@ function printStats(stats) {
       `avg-concurrency=${stats.averageConcurrency == null ? "-" : stats.averageConcurrency.toFixed(2)}\n` +
       `tokens=${stats.totalTokens.toLocaleString()} ` +
       `spend~${formatUsd(stats.totalCostUsd)} ` +
-      `(${formatUsd(stats.totalCostLowUsd)}–${formatUsd(stats.totalCostHighUsd)}, ` +
-      `combined totals split at an assumed 90% input) ` +
-      `serialized=${formatMinutes(stats.sequentialSerializedMs)}\n`,
+      `(${formatUsd(stats.totalCostLowUsd)}–${formatUsd(stats.totalCostHighUsd)}) ` +
+      `serialized=${formatMinutes(stats.sequentialSerializedMs)}\n` +
+      pricingCoverageLine(stats),
   );
   printProjectSpend(stats.projectSpend);
   process.stdout.write("\nby agent type\n");

@@ -4,13 +4,14 @@ import {
   agentTypeShapeKey,
   concurrencyTotals,
   dedupeNodes,
+  isRejected,
   nodeDurationMs,
   peakConcurrency,
   serializationCostMs,
   shapeNodes,
   spendNodes,
 } from "./analysis.mjs";
-import { estimateCost } from "./pricing.mjs";
+import { nodeCost, nodeTokens, pricingBasis } from "./pricing.mjs";
 
 const MULTI_AGENT_THRESHOLD = 2;
 const TOP_LIST_LENGTH = 8;
@@ -26,17 +27,15 @@ export function selectRunsWithNodes(store) {
     .prepare("SELECT * FROM runs")
     .all()
     .map((run) => ({ run, nodes: nodesByRun.get(run.id) ?? [] }))
-    .filter((entry) => entry.nodes.length > 0);
+    .filter((entry) => shapeNodes(entry.nodes).length > 0);
 }
 
 /** One run's shape from the agents that ran, and its spend from the nodes that carry tokens. */
 export function summarizeRun({ run, nodes }) {
   const ranNodes = shapeNodes(nodes);
   const spentNodes = spendNodes(nodes);
-  const totalTokens = spentNodes.reduce((sum, node) => sum + (node.total_tokens ?? 0), 0);
-  const costs = spentNodes.map((node) =>
-    estimateCost({ totalTokens: node.total_tokens, model: node.resolved_model ?? node.model }),
-  );
+  const totalTokens = spentNodes.reduce((sum, node) => sum + nodeTokens(node), 0);
+  const costs = spentNodes.map(nodeCost);
   const sumOfCosts = (field) => costs.reduce((sum, cost) => sum + cost[field], 0);
   return {
     runId: run.id,
@@ -78,15 +77,12 @@ function tallyBy(nodes, keyOf) {
       durationMs: 0,
     };
     bucket.count += 1;
-    bucket.tokens += node.total_tokens ?? 0;
+    bucket.tokens += nodeTokens(node);
     // A Workflow's duration runs until the lead saw its notice, which an idle session stretches
     // across days. It is not agent time.
     if (node.tool === "Workflow") bucket.untimedCount += 1;
     else bucket.durationMs += nodeDurationMs(node);
-    bucket.costUsd += estimateCost({
-      totalTokens: node.total_tokens,
-      model: node.resolved_model ?? node.model,
-    }).estimate;
+    bucket.costUsd += nodeCost(node).estimate;
     tally.set(key, bucket);
   }
   return [...tally.values()].sort((left, right) => right.costUsd - left.costUsd);
@@ -111,6 +107,16 @@ export function repeatedSequences(summaries) {
     .slice(0, TOP_LIST_LENGTH);
 }
 
+/**
+ * How the spend nodes are priced: from their own transcripts, partly so (a Workflow some of whose
+ * agents left none), from the harness's final-context total only, or not at all.
+ */
+export function pricingCoverage(nodes) {
+  const coverage = { billed: 0, partial: 0, context: 0, none: 0 };
+  for (const node of nodes) coverage[pricingBasis(node)] += 1;
+  return coverage;
+}
+
 /** Aggregate view over every recorded run: shape, waste, spend, and repeat candidates. */
 export function computeStats(store) {
   const summaries = selectRunsWithNodes(store).map(summarizeRun);
@@ -125,6 +131,8 @@ export function computeStats(store) {
     projectSpend: spendByProject(store),
     runCount: summaries.length,
     nodeCount: allNodes.length,
+    pricingCoverage: pricingCoverage(allNodes),
+    rejectedCount: dedupedNodes.filter(isRejected).length,
     workflowAgentCount: workflowAgents.length,
     multiAgentRunCount: multiAgent.length,
     parallelRunCount: multiAgent.filter((entry) => entry.peak > 1).length,
