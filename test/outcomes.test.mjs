@@ -62,6 +62,27 @@ test("a revert naming the PR marks it reverted", () => {
   assert.equal(outcome.reverted, 1);
 });
 
+test("a revert of a PR whose number only starts with this one's is not a revert of this one", () => {
+  const outcome = deriveOutcome({
+    view: mergedView({ title: "" }),
+    prNumber: 100,
+    followupCandidates: [{ sha: "r", message: 'Revert "feat: other (#1005)" (#1006)' }],
+    nowMs: AFTER_WINDOW_MS,
+  });
+  assert.equal(outcome.reverted, 0);
+});
+
+test("a fix-up listed in a squash body does not make a feature commit a fix", () => {
+  const outcome = deriveOutcome({
+    view: mergedView(),
+    prNumber: 100,
+    followupCandidates: [{ sha: "f", message: "feat(access): add the audit (#200)\n\n* fix typo\n* fix test" }],
+    nowMs: AFTER_WINDOW_MS,
+  });
+  assert.equal(outcome.followupCommits, 1);
+  assert.equal(outcome.followupFixCommits, 0);
+});
+
 test("follow-up columns stay null and the outcome open until the window closes", () => {
   const outcome = deriveOutcome({ view: mergedView(), prNumber: 100, followupCandidates: null, nowMs: INSIDE_WINDOW_MS });
   assert.equal(outcome.followupCommits, null);
@@ -84,16 +105,22 @@ test("a repo is read with its owner's account", () => {
   assert.equal(accountForRepo("suno-ai/glockenspiel", accounts), "chrisliu-suno");
 });
 
+function seedWorkflow(store, { id, sessionId, label = "implement-verify", mode, startedAt, resultText }) {
+  store
+    .prepare(
+      `INSERT INTO nodes (id, run_id, tool, label, prompt_sha, started_at, status, workflow_mode, result_text)
+       VALUES (?, ?, 'Workflow', ?, 'sha', ?, 'completed', ?, ?)`,
+    )
+    .run(id, sessionId, label, startedAt, mode, resultText);
+}
+
 function seedSession(store, { sessionId, mode, unitCount, surviving, prNumber, openedAt, activeMs, state }) {
   store.prepare("INSERT INTO runs (id, session_id, started_at) VALUES (?, ?, ?)").run(sessionId, sessionId, openedAt);
   if (mode) {
-    store
-      .prepare(
-        `INSERT INTO nodes (id, run_id, tool, label, prompt_sha, started_at, status, workflow_mode, result_text)
-         VALUES (?, ?, 'Workflow', 'implement-verify', 'sha', ?, 'completed', ?, ?)`,
-      )
-      .run(`wf-${sessionId}`, sessionId, openedAt, mode, JSON.stringify({ unitCount, findingsSurviving: surviving }));
+    const resultText = JSON.stringify({ mode, unitCount, completedCount: unitCount, findingsSurviving: surviving });
+    seedWorkflow(store, { id: `wf-${sessionId}`, sessionId, mode, startedAt: openedAt, resultText });
   }
+  if (prNumber == null) return;
   store
     .prepare(
       `INSERT INTO prs (url, repo, number, tool_use_id, session_id, opened_by, opened_at, active_ms_to_open, state, fetched_at)
@@ -122,4 +149,22 @@ test("outcomes split PRs by the implementation mode of their session and pick th
   assert.equal(outcomes.nextArm, "parallel");
   const widest = outcomes.byWidth.find((group) => group.bucket === "4+ units");
   assert.deepEqual(widest.arms.map((row) => row.arm), ["parallel"]);
+});
+
+test("only implement-verify runs that ran decide an arm, and the next arm counts sessions without PRs", () => {
+  const store = openStore(join(mkdtempSync(join(tmpdir(), "graphd-outcomes-")), "graph.db"));
+  seedSession(store, { sessionId: "p1", mode: "parallel", unitCount: 2, surviving: 0, prNumber: null, openedAt: "2026-11-11T10:00:00Z" });
+  seedSession(store, { sessionId: "v1", mode: "verify-only", unitCount: 2, surviving: 0, prNumber: 1, openedAt: "2026-11-11T11:00:00Z", activeMs: 1, state: "OPEN" });
+  seedSession(store, { sessionId: "v2", mode: "verify-only", unitCount: 2, surviving: 0, prNumber: 2, openedAt: "2026-11-11T12:00:00Z", activeMs: 1, state: "OPEN" });
+  // A parallel call that threw on overlapping files, and another workflow that happens to take a mode.
+  seedWorkflow(store, { id: "threw", sessionId: "v1", mode: "parallel", startedAt: "2026-11-11T11:30:00Z", resultText: "Error: parallel mode needs units with disjoint files" });
+  seedWorkflow(store, { id: "other", sessionId: "v2", label: "close-access-leaks", mode: "parallel", startedAt: "2026-11-11T12:30:00Z", resultText: '{"unitCount":3}' });
+
+  const outcomes = computeOutcomes(store);
+  assert.deepEqual(outcomes.allTime.map((row) => [row.arm, row.prCount]), [["verify-only", 2]]);
+  assert.equal(outcomes.nextArm, "parallel");
+  seedSession(store, { sessionId: "p2", mode: "parallel", unitCount: 2, surviving: 0, prNumber: null, openedAt: "2026-11-12T10:00:00Z" });
+  assert.equal(computeOutcomes(store).nextArm, "parallel");
+  seedSession(store, { sessionId: "p3", mode: "parallel", unitCount: 2, surviving: 0, prNumber: null, openedAt: "2026-11-12T11:00:00Z" });
+  assert.equal(computeOutcomes(store).nextArm, "verify-only");
 });

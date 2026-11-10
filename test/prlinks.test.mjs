@@ -12,6 +12,7 @@ const SESSION_ID = "33333333-1111-2222-3333-444444444444";
 // Sorts before SESSION_ID, so the copy cannot win by being read first.
 const COPY_SESSION_ID = "00000000-1111-2222-3333-444444444444";
 const PR_URL = "https://github.com/suno-ai/glockenspiel/pull/123";
+const SECOND_PR_URL = "https://github.com/suno-ai/glockenspiel/pull/124";
 const MINUTE_MS = 60_000;
 const START_MS = Date.parse("2026-11-01T10:00:00.000Z");
 
@@ -67,6 +68,34 @@ test("a blocked gh pr create opens nothing", () => {
     toolResult({ id: "c", minute: 0, text: "PreToolUse:Bash hook error: Blocked by the comm-style gate" }),
   ]);
   assert.deepEqual(blocked, []);
+});
+
+test("a gh pr create refused because the PR exists opens nothing", () => {
+  const text = `a pull request for branch "x" into branch "main" already exists:\n${PR_URL}`;
+  assert.deepEqual(pullRequestsIn([prCreateCall({ id: "e", minute: 0 }), toolResult({ id: "e", minute: 1, text })]), []);
+});
+
+test("a chained command that prints other PRs first links the PR it created", () => {
+  const text = "https://github.com/suno-ai/glockenspiel/pull/1\nhttps://github.com/suno-ai/glockenspiel/pull/2\n" + PR_URL;
+  const opened = pullRequestsIn([prCreateCall({ id: "f", minute: 0 }), toolResult({ id: "f", minute: 1, text })]);
+  assert.equal(opened[0].number, 123);
+});
+
+test("an agent's first edit made while the lead waits on it starts the clock at the edit", () => {
+  const waitingOnAgent = { at: START_MS + MINUTE_MS, toolInFlight: true };
+  const agentReturned = { at: START_MS + 21 * MINUTE_MS, toolInFlight: false };
+  const { activeMs } = activeMsToOpen({
+    leadPoints: [waitingOnAgent, agentReturned],
+    editTimesMs: [START_MS + 2 * MINUTE_MS],
+    openedAtMs: START_MS + 22 * MINUTE_MS,
+  });
+  assert.equal(activeMs, 20 * MINUTE_MS);
+});
+
+test("within one session the first call to print a URL opened the PR", () => {
+  const opened = { url: PR_URL, sessionId: SESSION_ID, openedAt: at(1) };
+  const retried = { url: PR_URL, sessionId: SESSION_ID, openedAt: at(9) };
+  assert.deepEqual(pickOriginal([retried, opened], new Map([[SESSION_ID, START_MS]])), [opened]);
 });
 
 test("a URL printed by some other command is not a PR this session opened", () => {
@@ -153,6 +182,12 @@ test("the importer links a PR to its original session and labels workflow modes"
     editCall({ minute: 5 }),
     prCreateCall({ id: "toolu_pr", minute: 8 }),
     toolResult({ id: "toolu_pr", minute: 8, text: PR_URL }),
+    workflowCall({ id: "toolu_wf3", minute: 10, input: { args: { units: [] }, description: "implement-verify" } }),
+    { ...workflowResult({ id: "toolu_wf3", minute: 11, runId: "wf_two" }), toolUseResult: { runId: "wf_two", content: '{"mode":"parallel","unitCount":2' } },
+    workflowCall({ id: "toolu_wf4", minute: 13, input: { args: { units: [] }, description: "implement-verify" } }),
+    workflowResult({ id: "toolu_wf4", minute: 14, runId: "wf_three" }),
+    prCreateCall({ id: "toolu_pr2", minute: 15 }),
+    toolResult({ id: "toolu_pr2", minute: 15, text: SECOND_PR_URL }),
   ];
   writeJsonLines(join(projectDir, `${SESSION_ID}.jsonl`), leadEntries);
   const copyEntries = [
@@ -161,6 +196,9 @@ test("the importer links a PR to its original session and labels workflow modes"
     toolResult({ id: "toolu_pr", minute: 8, text: PR_URL, sessionId: COPY_SESSION_ID }),
   ];
   writeJsonLines(join(projectDir, `${COPY_SESSION_ID}.jsonl`), copyEntries);
+  const workflowAgentDir = join(projectDir, SESSION_ID, "subagents", "workflows", "wf_two");
+  mkdirSync(workflowAgentDir, { recursive: true });
+  writeJsonLines(join(workflowAgentDir, "agent-impl1.jsonl"), [{ ...editCall({ minute: 12 }), isSidechain: true }]);
 
   const run = spawnSync(process.execPath, [IMPORTER_PATH], {
     env: { ...process.env, HOME: home, GRAPHD_STATE_DIR: stateDir },
@@ -168,10 +206,14 @@ test("the importer links a PR to its original session and labels workflow modes"
   });
   assert.equal(run.status, 0, run.stderr);
   const store = new DatabaseSync(join(stateDir, "graph.db"), { readOnly: true });
-  const rows = store.prepare("SELECT session_id, opened_by, active_ms_to_open FROM prs").all();
+  const rows = store.prepare("SELECT number, session_id, opened_by, work_started_at, active_ms_to_open FROM prs ORDER BY number").all();
   assert.deepEqual(
     rows.map((row) => ({ ...row })),
-    [{ session_id: SESSION_ID, opened_by: "lead", active_ms_to_open: 3 * MINUTE_MS }],
+    [
+      { number: 123, session_id: SESSION_ID, opened_by: "lead", work_started_at: at(5), active_ms_to_open: 3 * MINUTE_MS },
+      // The only edit after the first PR is a workflow agent's, at minute 12.
+      { number: 124, session_id: SESSION_ID, opened_by: "lead", work_started_at: at(12), active_ms_to_open: 3 * MINUTE_MS },
+    ],
   );
   const modes = store.prepare("SELECT id, workflow_mode FROM nodes WHERE tool = 'Workflow' ORDER BY id").all();
   assert.deepEqual(
@@ -179,6 +221,8 @@ test("the importer links a PR to its original session and labels workflow modes"
     [
       { id: "toolu_wf1", workflow_mode: "parallel" },
       { id: "toolu_wf2", workflow_mode: "parallel" },
+      { id: "toolu_wf3", workflow_mode: "parallel" },
+      { id: "toolu_wf4", workflow_mode: "verify-only" },
     ],
   );
 });

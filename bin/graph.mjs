@@ -380,7 +380,7 @@ function printOutcomes(outcomes) {
     `\nwork-min: median active lead minutes, first edit to PR open. review-commits: commits made\n` +
       `after the PR opened. followups: later commits by the author on the PR's files within 7 days\n` +
       `of merge, not counting PRs already open when it merged. ${outcomes.pendingCount} PRs not yet final, ` +
-      `${outcomes.unfetchedCount} never fetched.\n`,
+      `${outcomes.unfetchedCount} never fetched, ${outcomes.erroredCount} failed their last fetch.\n`,
   );
 }
 

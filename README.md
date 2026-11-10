@@ -319,3 +319,8 @@ prints whichever has fewer sessions since the trial began, and eng-task uses it.
 
 A PR opened any other way (the web UI, an MCP tool, `gh api`) is not linked. Transcripts that
 romp copies into other sessions are attributed to the session that started first.
+
+What follow-ups miss: rework that lands on a stacked PR's base branch after it merges is folded
+into the parent's squash and not counted; a revert by someone other than the PR's author is not
+seen; a stacked PR opened outside a Claude session is not known to be planned, so its landing
+counts as a follow-up.

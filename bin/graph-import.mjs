@@ -94,6 +94,48 @@ function transcriptPaths() {
   });
 }
 
+const WORKFLOWS_DIR_NAME = "workflows";
+const AGENT_TRANSCRIPT_PATTERN = /^agent-[\w-]+\.jsonl$/;
+
+/**
+ * Agent transcripts inside each session's Workflow runs. They are not imported as transcripts —
+ * their agents are imported from the Workflow's result — but their file edits are the start of
+ * the work behind a PR opened in parallel mode.
+ */
+function workflowAgentPaths() {
+  if (!statSync(TRANSCRIPT_ROOT, { throwIfNoEntry: false })) return [];
+  const paths = [];
+  for (const projectDir of readdirSync(TRANSCRIPT_ROOT)) {
+    const projectPath = join(TRANSCRIPT_ROOT, projectDir);
+    if (!statSync(projectPath).isDirectory()) continue;
+    for (const sessionDir of readdirSync(projectPath)) {
+      const workflowsPath = join(projectPath, sessionDir, SUBAGENT_DIR_NAME, WORKFLOWS_DIR_NAME);
+      if (!statSync(workflowsPath, { throwIfNoEntry: false })?.isDirectory()) continue;
+      for (const runDir of readdirSync(workflowsPath)) {
+        const runPath = join(workflowsPath, runDir);
+        if (!statSync(runPath).isDirectory()) continue;
+        for (const fileName of readdirSync(runPath)) {
+          if (AGENT_TRANSCRIPT_PATTERN.test(fileName)) paths.push(join(runPath, fileName));
+        }
+      }
+    }
+  }
+  return paths;
+}
+
+function readEntries(path) {
+  const entries = [];
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    if (!line.startsWith("{")) continue;
+    try {
+      entries.push(JSON.parse(line));
+    } catch {
+      // A line being written while we read is skipped; the next import picks it up.
+    }
+  }
+  return entries;
+}
+
 /**
  * Collects the session, spawn records, their results, human/agent interventions, and
  * messages sent to already-running agents.
@@ -706,6 +748,12 @@ for (const path of transcriptPaths()) {
       });
     }
   }
+}
+
+for (const path of workflowAgentPaths()) {
+  const entries = readEntries(path);
+  const sessionId = entries.find((entry) => entry.sessionId)?.sessionId;
+  if (sessionId) pushTo(editTimesBySession, sessionId, editTimes(entries));
 }
 
 let importedWorkflowAgents = 0;

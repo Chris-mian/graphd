@@ -4,12 +4,14 @@ import { activeSegments, unionMs } from "./workflowchildren.mjs";
  * Which pull requests a session opened, and how long the work behind each took.
  *
  * A PR is recognised only from a `gh pr create` Bash call whose own result names the PR's URL. A
- * call blocked by a hook, or one that failed, prints no URL and opens nothing, so it records
- * nothing. A PR opened some other way (the web UI, an MCP tool, `gh api`) is not seen.
+ * call blocked by a hook prints no URL. A call refused because the PR already exists prints that
+ * PR's URL, and is skipped. A PR opened some other way (the web UI, an MCP tool, `gh api`) is not
+ * seen.
  */
 
 const PR_CREATE_PATTERN = /\bgh\s+pr\s+create\b/;
-const PR_URL_PATTERN = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/;
+const PR_URL_PATTERN = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
+const ALREADY_EXISTS_PATTERN = /already exists:?\s*https:\/\/github\.com\//;
 const EDIT_TOOL_NAMES = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
 function blockText(content) {
@@ -31,9 +33,14 @@ function resultTextOf(entry, block) {
   return parts.join("\n");
 }
 
-/** The PR a `gh pr create` result printed, or null when it printed none. */
+/**
+ * The PR a `gh pr create` result printed, or null when it printed none or refused because the PR
+ * exists. The last URL wins: a chained command prints other PRs' URLs first, and gh prints the
+ * new PR's URL last.
+ */
 export function pullRequestFromText(text) {
-  const match = PR_URL_PATTERN.exec(text ?? "");
+  if (ALREADY_EXISTS_PATTERN.test(text ?? "")) return null;
+  const match = [...(text ?? "").matchAll(PR_URL_PATTERN)].at(-1);
   if (!match) return null;
   return { url: match[0], repo: match[1], number: Number(match[2]) };
 }
@@ -92,25 +99,32 @@ export function activeMsToOpen({ leadPoints, editTimesMs, openedAtMs, previousOp
   );
   if (!Number.isFinite(startMs)) return { workStartedAtMs: null, activeMs: null };
   const window = leadPoints.filter((point) => point.at >= startMs && point.at <= openedAtMs);
-  const points = [{ at: startMs, toolInFlight: false }, ...window, { at: openedAtMs, toolInFlight: false }];
+  // An agent's edit lands while the lead waits on that agent, and the wait is work.
+  const isLeadWaiting = leadPoints.filter((point) => point.at <= startMs).at(-1)?.toolInFlight ?? false;
+  const points = [{ at: startMs, toolInFlight: isLeadWaiting }, ...window, { at: openedAtMs, toolInFlight: false }];
   return { workStartedAtMs: startMs, activeMs: unionMs(activeSegments(points)) };
 }
 
 /**
  * One row per PR when several transcripts record the same call. romp forks and replays copy a
  * session's entries under a new session id, so the copy whose session started first is the
- * original.
+ * original; within one session, the first call to print the URL opened it.
  */
 export function pickOriginal(candidates, sessionStartMs) {
   const byUrl = new Map();
-  const startOf = (candidate) => sessionStartMs.get(candidate.sessionId) ?? Date.parse(candidate.openedAt);
+  const rankOf = (candidate) => [
+    sessionStartMs.get(candidate.sessionId) ?? Date.parse(candidate.openedAt),
+    Date.parse(candidate.openedAt),
+    candidate.sessionId,
+  ];
+  const isBefore = (left, right) => {
+    const [leftRank, rightRank] = [rankOf(left), rankOf(right)];
+    const index = leftRank.findIndex((value, position) => value !== rightRank[position]);
+    return index >= 0 && leftRank[index] < rightRank[index];
+  };
   for (const candidate of candidates) {
     const current = byUrl.get(candidate.url);
-    const isEarlier =
-      !current ||
-      startOf(candidate) < startOf(current) ||
-      (startOf(candidate) === startOf(current) && candidate.sessionId < current.sessionId);
-    if (isEarlier) byUrl.set(candidate.url, candidate);
+    if (!current || isBefore(candidate, current)) byUrl.set(candidate.url, candidate);
   }
   return [...byUrl.values()];
 }

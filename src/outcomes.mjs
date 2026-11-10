@@ -37,15 +37,19 @@ function commitsAfterOpen(view) {
   return (view.commits ?? []).filter((commit) => Date.parse(commit.authoredDate) > openedMs).length;
 }
 
+/** A squash body lists every review fixup, so only the headline says what a commit is. */
+function headlineOf(message) {
+  return message.split("\n")[0];
+}
+
 function isRevertOf(view, prNumber, message) {
-  const [headline] = message.split("\n");
-  if (!REVERT_HEADLINE_PATTERN.test(headline)) return false;
-  return message.includes(`#${prNumber}`) || (Boolean(view.title) && message.includes(view.title));
+  if (!REVERT_HEADLINE_PATTERN.test(headlineOf(message))) return false;
+  return new RegExp(`#${prNumber}\\b`).test(message) || (Boolean(view.title) && message.includes(view.title));
 }
 
 /** The PR a squash-merge commit landed, from the `(#123)` its headline ends with. */
 function squashedPrNumber(message) {
-  const match = SQUASH_PR_NUMBER_PATTERN.exec(message.split("\n")[0]);
+  const match = SQUASH_PR_NUMBER_PATTERN.exec(headlineOf(message));
   return match ? Number(match[1]) : null;
 }
 
@@ -83,7 +87,7 @@ export function deriveOutcome({ view, prNumber, followupCandidates = null, plann
     fileCount: (view.files ?? []).length,
     commitsAfterOpen: commitsAfterOpen(view),
     followupCommits: followups ? followups.length : null,
-    followupFixCommits: followups ? followups.filter((commit) => FIX_MESSAGE_PATTERN.test(commit.message)).length : null,
+    followupFixCommits: followups ? followups.filter((commit) => FIX_MESSAGE_PATTERN.test(headlineOf(commit.message))).length : null,
     followupShas: followups ? JSON.stringify(followups.map((commit) => commit.sha)) : null,
     reverted: followups ? Number(followups.some((commit) => isRevertOf(view, prNumber, commit.message))) : null,
     isFinal: isClosedUnmerged || (isWindowClosed && followups !== null),

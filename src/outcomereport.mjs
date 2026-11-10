@@ -22,6 +22,7 @@ const UNIT_BUCKETS = [
 ];
 const MILLISECONDS_PER_MINUTE = 60_000;
 const HUMAN_KINDS = ["interrupt", "correction"];
+const IMPLEMENT_VERIFY_LABEL = "implement-verify";
 
 
 /** Each session's arm, widest implement-verify run, and surviving findings per unit. */
@@ -29,20 +30,24 @@ function sessionWorkflowFacts(store) {
   const facts = new Map();
   const rows = store
     .prepare(
-      `SELECT n.run_id AS session_id, n.workflow_mode, n.result_text FROM nodes n
-       WHERE n.tool = 'Workflow' AND n.workflow_mode IS NOT NULL AND COALESCE(n.status, '') <> 'rejected'`,
+      `SELECT run_id AS session_id, workflow_mode, result_text, started_at FROM nodes
+       WHERE tool = 'Workflow' AND label = ? AND workflow_mode IS NOT NULL AND COALESCE(status, '') <> 'rejected'`,
     )
-    .all();
+    .all(IMPLEMENT_VERIFY_LABEL);
   for (const row of rows) {
-    const fact = facts.get(row.session_id) ?? { modes: new Set(), unitCount: 0, units: 0, surviving: 0 };
-    fact.modes.add(row.workflow_mode);
+    // A run counts once its result reports its units; one that threw on its input never ran.
     const unitCount = resultField(row.result_text, "unitCount");
+    if (!Number.isFinite(unitCount)) continue;
+    const completedCount = resultField(row.result_text, "completedCount");
     const findingsSurviving = resultField(row.result_text, "findingsSurviving");
-    if (Number.isFinite(unitCount) && Number.isFinite(findingsSurviving)) {
-      fact.unitCount = Math.max(fact.unitCount, unitCount);
-      fact.units += unitCount;
+    const fact = facts.get(row.session_id) ?? { modes: new Set(), unitCount: 0, units: 0, surviving: 0, firstRunAt: row.started_at };
+    fact.modes.add(row.workflow_mode);
+    fact.unitCount = Math.max(fact.unitCount, unitCount);
+    if (Number.isFinite(findingsSurviving)) {
+      fact.units += Number.isFinite(completedCount) ? completedCount : unitCount;
       fact.surviving += findingsSurviving;
     }
+    if (row.started_at < fact.firstRunAt) fact.firstRunAt = row.started_at;
     facts.set(row.session_id, fact);
   }
   return facts;
@@ -106,14 +111,22 @@ function armTable(pullRequests, facts, humanBySession) {
 
 /**
  * The arm the next implement-verify run should take, so both arms of the trial stay
- * contemporaneous: whichever has fewer trial sessions, parallel on a tie.
+ * contemporaneous: whichever has fewer sessions since the trial began, parallel on a tie. Counts
+ * every session that ran implement-verify, whether or not it has opened a PR yet.
  */
-function nextArm(trialRows) {
-  const countOf = (arm) => trialRows.find((row) => row.arm === arm)?.sessionCount ?? 0;
-  return countOf(ARM_PARALLEL) <= countOf(ARM_VERIFY_ONLY) ? ARM_PARALLEL : ARM_VERIFY_ONLY;
+function nextArm(facts) {
+  const counts = new Map([
+    [ARM_PARALLEL, 0],
+    [ARM_VERIFY_ONLY, 0],
+  ]);
+  for (const fact of facts.values()) {
+    const arm = armOf(fact);
+    if (fact.firstRunAt >= TRIAL_START && counts.has(arm)) counts.set(arm, counts.get(arm) + 1);
+  }
+  return counts.get(ARM_PARALLEL) <= counts.get(ARM_VERIFY_ONLY) ? ARM_PARALLEL : ARM_VERIFY_ONLY;
 }
 
-/** Arms over all PRs, over the trial window, and the trial window split by run width. */
+/** Arms over all PRs, over the trial window, and all PRs split by the widest run's unit count. */
 export function computeOutcomes(store) {
   const facts = sessionWorkflowFacts(store);
   const humanBySession = humanCountsBySession(store);
@@ -136,8 +149,9 @@ export function computeOutcomes(store) {
     allTime: armTable(pullRequests, facts, humanBySession),
     trial: trialArms,
     byWidth,
-    nextArm: nextArm(trialArms),
+    nextArm: nextArm(facts),
     pendingCount: pullRequests.filter((pullRequest) => !pullRequest.outcome_final).length,
     unfetchedCount: pullRequests.filter((pullRequest) => !pullRequest.fetched_at).length,
+    erroredCount: pullRequests.filter((pullRequest) => pullRequest.fetch_error).length,
   };
 }
