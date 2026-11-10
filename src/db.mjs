@@ -22,6 +22,7 @@ const NODE_RESULT_COLUMNS = [
   ["active_segments", "TEXT"],
   ["billed_usage", "TEXT"],
   ["billed_share", "REAL"],
+  ["workflow_mode", "TEXT"],
 ];
 
 const SESSION_COLUMNS = [["turn_count", "INTEGER NOT NULL DEFAULT 0"]];

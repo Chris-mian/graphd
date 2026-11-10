@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Daily PR outcome refresh. Reads GitHub with gh (read-only) and writes SQLite; spends no model
+     tokens. Daily because an outcome moves on a scale of days: merge, then a 7-day follow-up
+     window. A PR stops being fetched once its outcome is final. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.chrisliu.graphd-outcomes</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/chrisliu/.nvm/versions/node/v22.22.3/bin/node</string>
+    <string>/Users/chrisliu/romp/graph-mechanism/bin/graph-outcomes.mjs</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>15</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>Nice</key>
+  <integer>5</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/chrisliu/.graphd/logs/graphd-outcomes.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/chrisliu/.graphd/logs/graphd-outcomes.err</string>
+</dict>
+</plist>

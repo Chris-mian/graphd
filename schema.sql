@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   -- JSON [[startMs, endMs], ...]: when a Workflow's agent was working, gaps of idle time removed.
   active_segments TEXT,
   billed_usage   TEXT,                             -- JSON {model: {input, cacheWrite5m, cacheWrite1h, cacheRead, output, turns}} from the agent's transcript
-  billed_share   REAL                              -- Workflow only: share of its agents with a transcript, when under 1
+  billed_share   REAL,                             -- Workflow only: share of its agents with a transcript, when under 1
+  workflow_mode  TEXT                              -- implement-verify only: 'parallel' | 'verify-only'
 );
 
 CREATE INDEX IF NOT EXISTS nodes_run_idx ON nodes (run_id, started_at);
@@ -156,3 +157,45 @@ CREATE TABLE IF NOT EXISTS resumptions (
 
 CREATE INDEX IF NOT EXISTS resumptions_run_idx ON resumptions (run_id, ts);
 CREATE INDEX IF NOT EXISTS resumptions_node_idx ON resumptions (node_id);
+
+-- Pull requests a session opened with `gh pr create`, and what became of them. session_id has no
+-- foreign key: a session that opened a PR without spawning an agent has no `runs` row, and
+-- belongs in the baseline all the same. When romp copies a session, the same call appears under
+-- several session ids; the importer keeps the session that started first.
+CREATE TABLE IF NOT EXISTS prs (
+  url               TEXT PRIMARY KEY,
+  repo              TEXT NOT NULL,               -- owner/name
+  number            INTEGER NOT NULL,
+  tool_use_id       TEXT NOT NULL,               -- the `gh pr create` call
+  session_id        TEXT NOT NULL,
+  cwd               TEXT,
+  opened_by         TEXT NOT NULL CHECK (opened_by IN ('lead', 'agent')),
+  opened_at         TEXT NOT NULL,
+  -- The first file edit after the session's previous PR, and the lead's active time from it to
+  -- the open. Null when no edit preceded the PR.
+  work_started_at   TEXT,
+  active_ms_to_open INTEGER,
+  -- Filled by graph-outcomes from GitHub.
+  author            TEXT,
+  state             TEXT,                        -- OPEN | MERGED | CLOSED
+  merged_at         TEXT,
+  closed_at         TEXT,
+  base_ref          TEXT,
+  file_count        INTEGER,
+  -- Commits on the PR made after it opened: rework during review.
+  commits_after_open INTEGER,
+  -- Commits by the PR's author on its base branch, touching its files, within 7 days of merge,
+  -- excluding the PR's own. The rework that review missed. fix_commits is the subset whose
+  -- message reads as a fix or revert.
+  followup_commits  INTEGER,
+  followup_fix_commits INTEGER,
+  followup_shas     TEXT,                        -- JSON array
+  reverted          INTEGER,
+  -- 1 once nothing about the PR can change: closed unmerged, or 7 days past merge.
+  outcome_final     INTEGER NOT NULL DEFAULT 0,
+  fetched_at        TEXT,
+  fetch_error       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS prs_session_idx ON prs (session_id);
+CREATE INDEX IF NOT EXISTS prs_opened_idx ON prs (opened_at DESC);

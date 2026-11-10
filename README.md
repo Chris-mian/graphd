@@ -25,6 +25,8 @@ graph show <run-id>     nodes, edges, declared/observed diff
 graph checks [limit]    policy evaluations, including shadow would-denies
 graph stats             shape, serialized agent-time, spend, harvest candidates
 graph trend             per week: runs that overlapped, agents at once, serialized time, spend
+graph outcomes          PRs per implementation mode: work time to open, merge, rework, findings
+graph next-arm          the implement-verify mode the parallel trial wants next
 graph eval              what the intervention record can and cannot prove
 graph library           saved workflows and candidates
 graph doctor            configuration health
@@ -239,12 +241,13 @@ enforcement is on with enough runs behind it to trust the rule. Same data render
 
 ## Scheduled jobs
 
-Four launch agents, all logging under `~/.graphd/logs/`:
+Five launch agents, all logging under `~/.graphd/logs/`:
 
 | Label | When | What |
 | --- | --- | --- |
 | `com.chrisliu.graphd` | always | the daemon on `127.0.0.1:8787` |
-| `com.chrisliu.graphd-import` | hourly | backfills nodes and interventions from transcripts |
+| `com.chrisliu.graphd-import` | hourly | backfills nodes and interventions from transcripts, and links each `gh pr create` to its session |
+| `com.chrisliu.graphd-outcomes` | daily 07:15 | `bin/graph-outcomes.mjs` — reads each linked PR from GitHub until its outcome is final: merged or closed, commits after open, follow-up commits within 7 days of merge |
 | `com.chrisliu.graphd-harvest` | Mondays 08:45 | `bin/run-harvest.sh` — refreshes the store, runs `/lesson-harvest` headless, files proposals pending |
 | `com.chrisliu.nightshift` | nightly 01:30, real shift every third night | `bin/run-nightshift.sh` — drains `~/nightshift/TASKS.md` with headless `/nightshift` calls, then writes the morning summary |
 
@@ -296,3 +299,28 @@ whatever CLI version is installed and fails the whole run with a 400 when it doe
 - The importer measures only real work: transcripts whose working directory is test scratch
   (romp's suite replays recorded turns through a scratch checkout) are skipped, and the skip
   count is printed on every import.
+
+## Outcomes: faster and better
+
+`graph trend` says how work was shaped. `graph outcomes` says whether it paid off, from the PRs
+each session opened with `gh pr create`:
+
+- **Faster** — active lead minutes from the first file edit to the PR's open. Idle gaps over five
+  minutes are cut, so a session left open overnight does not count the night.
+- **Better** — whether it merged, commits made after it opened (rework in review), and commits by
+  the same author on the same files within 7 days of merge (rework review missed). A follow-up
+  that lands a PR already open when this one merged is the next PR of a stack, and is not counted.
+  `fix-followups` is the subset whose message reads as a fix or revert; in a repo whose PR titles
+  start `fix(...)` that is a weak signal, so read it beside `followups`, not alone.
+
+Rows are split by the implementation mode of the session's implement-verify runs, then by the
+widest run's unit count. The parallel-implementation trial alternates modes: `graph next-arm`
+prints whichever has fewer sessions since the trial began, and eng-task uses it.
+
+A PR opened any other way (the web UI, an MCP tool, `gh api`) is not linked. Transcripts that
+romp copies into other sessions are attributed to the session that started first.
+
+What follow-ups miss: rework that lands on a stacked PR's base branch after it merges is folded
+into the parent's squash and not counted; a revert by someone other than the PR's author is not
+seen; a stacked PR opened outside a Claude session is not known to be planned, so its landing
+counts as a follow-up.
