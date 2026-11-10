@@ -17,6 +17,8 @@ const USAGE = `graph — inspect graphd
   graph reject <id>       move a candidate out of the registry (reversible)
   graph stats             shape, serialized agent-time, and token spend across all runs
   graph trend             per week: runs that ran in parallel, avg concurrency, serialized time, spend
+  graph outcomes          PRs per implementation mode: work time to open, merge, rework, findings
+  graph next-arm          which implement-verify mode the parallel trial wants next
   graph lessons           human interventions, self-corrections, autonomy trend
   graph accept <rule>     accept a harvested lesson; every agent reads it from then on
   graph rules             accepted lessons currently injected into agent prompts
@@ -342,6 +344,46 @@ function printEvaluation(evaluation) {
   }
 }
 
+function formatFigure(value, digits = 1) {
+  return value == null ? "-" : value.toFixed(digits);
+}
+
+function printArmRows(rows) {
+  if (rows.length === 0) {
+    process.stdout.write("  no PRs yet\n");
+    return;
+  }
+  process.stdout.write("  arm           PRs  sessions  work-min  merged  review-commits  followups  fix-followups  reverted  findings/unit  human/session\n");
+  for (const row of rows) {
+    process.stdout.write(
+      `  ${row.arm.padEnd(12)}  ${String(row.prCount).padStart(3)}  ${String(row.sessionCount).padStart(8)}  ` +
+        `${formatFigure(row.medianActiveMinutesToOpen).padStart(8)}  ` +
+        `${row.mergedShare == null ? "     -" : `${Math.round(row.mergedShare * 100)}%`.padStart(6)}  ` +
+        `${formatFigure(row.commitsAfterOpen, 2).padStart(14)}  ` +
+        `${formatFigure(row.followupsPerMerged, 2).padStart(9)}  ${formatFigure(row.fixFollowupsPerMerged, 2).padStart(13)}  ` +
+        `${String(row.revertedCount).padStart(8)}  ${formatFigure(row.survivingFindingsPerUnit, 2).padStart(13)}  ` +
+        `${formatFigure(row.humanPerSession, 2).padStart(13)}${row.isTooFew ? "  (too few PRs)" : ""}\n`,
+    );
+  }
+}
+
+function printOutcomes(outcomes) {
+  process.stdout.write("all PRs\n");
+  printArmRows(outcomes.allTime);
+  process.stdout.write(`\nparallel trial, since ${outcomes.trialStart}  (next run: ${outcomes.nextArm})\n`);
+  printArmRows(outcomes.trial);
+  for (const group of outcomes.byWidth) {
+    process.stdout.write(`\nall PRs, widest implement-verify run ${group.bucket}\n`);
+    printArmRows(group.arms);
+  }
+  process.stdout.write(
+    `\nwork-min: median active lead minutes, first edit to PR open. review-commits: commits made\n` +
+      `after the PR opened. followups: later commits by the author on the PR's files within 7 days\n` +
+      `of merge, not counting PRs already open when it merged. ${outcomes.pendingCount} PRs not yet final, ` +
+      `${outcomes.unfetchedCount} never fetched.\n`,
+  );
+}
+
 function printDiagnostics(checks) {
   const marks = { pass: "✓", warn: "⚠", fail: "✕" };
   for (const entry of checks) {
@@ -432,6 +474,12 @@ try {
       break;
     case "trend":
       printTrend((await callDaemon("/v1/trend")).weeks);
+      break;
+    case "outcomes":
+      printOutcomes((await callDaemon("/v1/outcomes")).outcomes);
+      break;
+    case "next-arm":
+      process.stdout.write(`${(await callDaemon("/v1/outcomes")).outcomes.nextArm}\n`);
       break;
     case "lessons":
       printLessons((await callDaemon("/v1/lessons")).lessons);

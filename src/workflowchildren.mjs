@@ -61,7 +61,7 @@ export function activeSegments(points, maxGapMs = MAX_ACTIVE_GAP_MS) {
  * Walked in time order, not file order: a notification that arrived during a tool call is written
  * after the call's result but stamped with its arrival time.
  */
-function activityPoints(entries) {
+export function activityPoints(entries) {
   const openToolUseIds = new Set();
   const points = [];
   const timed = entries

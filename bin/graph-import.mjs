@@ -10,7 +10,8 @@ import {
   pruneSupersededHookNodes,
   recordTaskCompletion,
 } from "../src/db.mjs";
-import { countWorkflowAgents, readWorkflowChildren, unionMs } from "../src/workflowchildren.mjs";
+import { activityPoints, countWorkflowAgents, readWorkflowChildren, unionMs } from "../src/workflowchildren.mjs";
+import { activeMsToOpen, editTimes, pickOriginal, pullRequestsIn, workflowModeFromInput } from "../src/prlinks.mjs";
 import {
   aggregateUsage,
   assistantMessageIds,
@@ -189,6 +190,8 @@ function parseTranscript(path) {
           name: block.input?.name ?? null,
           model: block.input?.model ?? null,
           prompt: block.input?.prompt ?? "",
+          workflowMode: block.name === "Workflow" ? workflowModeFromInput(block.input) : null,
+          resumeFromRunId: block.name === "Workflow" ? (block.input?.resumeFromRunId ?? null) : null,
         });
       }
       if (block.type === "tool_use" && block.name === RESUME_TOOL_NAME) {
@@ -269,8 +272,8 @@ function insertSpawn(store, spawn, completion) {
       `INSERT INTO nodes
          (id, run_id, tool, agent_type, label, name, model, prompt_sha, started_at, ended_at,
           status, duration_ms, agent_id, resolved_model, total_tokens, tool_use_count,
-          task_id, output_file, is_async, true_duration_ms, prompt_text, result_text)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          task_id, output_file, is_async, true_duration_ms, prompt_text, result_text, workflow_mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET
          label            = COALESCE(nodes.label, excluded.label),
          name             = COALESCE(excluded.name, nodes.name),
@@ -281,7 +284,8 @@ function insertSpawn(store, spawn, completion) {
          is_async         = excluded.is_async,
          true_duration_ms = COALESCE(nodes.true_duration_ms, excluded.true_duration_ms),
          prompt_text      = COALESCE(excluded.prompt_text, nodes.prompt_text),
-         result_text      = COALESCE(excluded.result_text, nodes.result_text)`,
+         result_text      = COALESCE(excluded.result_text, nodes.result_text),
+         workflow_mode    = COALESCE(excluded.workflow_mode, nodes.workflow_mode)`,
     )
     .run(
       spawn.toolUseId,
@@ -307,6 +311,7 @@ function insertSpawn(store, spawn, completion) {
       isAsync ? null : toolCallMs,
       (spawn.prompt ?? "").slice(0, MAX_TEXT_CHARS) || null,
       isErrorString ? rawResult.slice(0, MAX_TEXT_CHARS) : resultTextFrom(result),
+      spawn.workflowMode ?? null,
     );
 }
 
@@ -517,6 +522,82 @@ function insertIntervention(store, intervention) {
     );
 }
 
+const IMPLEMENT_VERIFY_LABEL = "implement-verify";
+const DEFAULT_WORKFLOW_MODE = "verify-only";
+
+/** The `mode` an implement-verify result reports, when its result is the workflow's return JSON. */
+function modeFromResultText(resultText) {
+  try {
+    const mode = JSON.parse(resultText ?? "")?.mode;
+    return typeof mode === "string" ? mode : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Settles the mode of every implement-verify call: its own args, else the mode of the run it
+ * resumed, else the mode its result reports, else the workflow's default.
+ */
+function resolveWorkflowModes(store, workflowCalls) {
+  const modeByRunId = new Map();
+  for (const call of workflowCalls) if (call.mode && call.workflowRunId) modeByRunId.set(call.workflowRunId, call.mode);
+  const setMode = store.prepare("UPDATE nodes SET workflow_mode = ? WHERE id = ? AND workflow_mode IS NULL");
+  for (const call of workflowCalls) {
+    const inherited = call.resumeFromRunId ? modeByRunId.get(call.resumeFromRunId) : null;
+    if (!call.mode && inherited) setMode.run(inherited, call.toolUseId);
+  }
+  const unresolved = store
+    .prepare("SELECT id, result_text FROM nodes WHERE tool = 'Workflow' AND label = ? AND workflow_mode IS NULL")
+    .all(IMPLEMENT_VERIFY_LABEL);
+  for (const node of unresolved) setMode.run(modeFromResultText(node.result_text) ?? DEFAULT_WORKFLOW_MODE, node.id);
+}
+
+function pushTo(map, key, values) {
+  if (!map.has(key)) map.set(key, []);
+  map.get(key).push(...values);
+}
+
+/** Writes each PR once, under its original session, with the active time of the work behind it. */
+function recordPullRequests(store, { candidates, sessionStartMs, leadPointsBySession, editTimesBySession }) {
+  const upsert = store.prepare(
+    `INSERT INTO prs (url, repo, number, tool_use_id, session_id, cwd, opened_by, opened_at, work_started_at, active_ms_to_open)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (url) DO UPDATE SET
+       tool_use_id = excluded.tool_use_id, session_id = excluded.session_id, cwd = excluded.cwd,
+       opened_by = excluded.opened_by, opened_at = excluded.opened_at,
+       work_started_at = excluded.work_started_at, active_ms_to_open = excluded.active_ms_to_open`,
+  );
+  const originals = pickOriginal(candidates, sessionStartMs).sort((left, right) => left.openedAt.localeCompare(right.openedAt));
+  const previousOpenBySession = new Map();
+  let recorded = 0;
+  for (const pullRequest of originals) {
+    const openedAtMs = Date.parse(pullRequest.openedAt);
+    const { workStartedAtMs, activeMs } = activeMsToOpen({
+      leadPoints: leadPointsBySession.get(pullRequest.sessionId) ?? [],
+      editTimesMs: editTimesBySession.get(pullRequest.sessionId) ?? [],
+      openedAtMs,
+      previousOpenedAtMs: previousOpenBySession.get(pullRequest.sessionId),
+    });
+    previousOpenBySession.set(pullRequest.sessionId, openedAtMs);
+    if (!pullRequest.isInWindow) continue;
+    upsert.run(
+      pullRequest.url,
+      pullRequest.repo,
+      pullRequest.number,
+      pullRequest.toolUseId,
+      pullRequest.sessionId,
+      pullRequest.cwd,
+      pullRequest.openedBy,
+      pullRequest.openedAt,
+      workStartedAtMs == null ? null : new Date(workStartedAtMs).toISOString(),
+      activeMs,
+    );
+    recorded += 1;
+  }
+  return recorded;
+}
+
 const requestedDays = Number.parseInt(process.argv[2] ?? "", 10);
 const cutoffMs = Number.isFinite(requestedDays)
   ? Date.now() - requestedDays * MILLISECONDS_PER_DAY
@@ -539,6 +620,13 @@ const workflowParents = new Map();
 // thread's message ids known, so a fork's inherited parent turn can be told apart from its own.
 const pendingBillings = [];
 const mainThreadMessageIds = new Set();
+// PRs are attributed and timed after every transcript is read: the same call can sit in several
+// sessions' transcripts, and the edits behind a PR can sit in its agents' transcripts.
+const pullRequestCandidates = [];
+const sessionStartMs = new Map();
+const leadPointsBySession = new Map();
+const editTimesBySession = new Map();
+const workflowCalls = [];
 
 store.exec("BEGIN");
 for (const path of transcriptPaths()) {
@@ -550,6 +638,17 @@ for (const path of transcriptPaths()) {
   }
   scannedTranscripts += 1;
   const meta = subagentMeta(path);
+  const isSubagentTranscript = path.includes(`/${SUBAGENT_DIR_NAME}/`);
+  const transcriptSessionId = entries.find((entry) => entry.sessionId)?.sessionId ?? null;
+  if (transcriptSessionId) pushTo(editTimesBySession, transcriptSessionId, editTimes(entries));
+  if (!isSubagentTranscript && session.id && session.startedAt) {
+    sessionStartMs.set(session.id, Date.parse(session.startedAt));
+    pushTo(leadPointsBySession, session.id, activityPoints(entries.filter((entry) => !entry.isSidechain)));
+  }
+  for (const pullRequest of pullRequestsIn(entries, { openedBy: isSubagentTranscript ? "agent" : "lead" })) {
+    if (!pullRequest.sessionId) continue;
+    pullRequestCandidates.push({ ...pullRequest, isInWindow: Date.parse(pullRequest.openedAt) >= cutoffMs });
+  }
   if (meta) {
     pendingBillings.push({ meta, firstAt: firstTimestamp(entries), countsByMessage: messageUsage(entries) });
   } else if (!path.includes(`/${SUBAGENT_DIR_NAME}/`)) {
@@ -578,6 +677,14 @@ for (const path of transcriptPaths()) {
     }
     insertSpawn(store, spawn, completion);
     importedNodes += 1;
+    if (spawn.tool === "Workflow") {
+      workflowCalls.push({
+        toolUseId: spawn.toolUseId,
+        mode: spawn.workflowMode,
+        resumeFromRunId: spawn.resumeFromRunId,
+        workflowRunId: completion?.result?.runId ?? null,
+      });
+    }
     // First sighting wins, matching insertSpawn, which never moves a node to another run.
     if (isWorkflow && !workflowParents.has(spawn.toolUseId)) {
       workflowParents.set(spawn.toolUseId, {
@@ -622,6 +729,13 @@ resolvedResumptions = store
   .prepare("SELECT COUNT(*) AS resolvedCount FROM resumptions WHERE node_id IS NOT NULL")
   .get().resolvedCount;
 const prunedHookNodes = pruneSupersededHookNodes(store);
+resolveWorkflowModes(store, workflowCalls);
+const recordedPullRequests = recordPullRequests(store, {
+  candidates: pullRequestCandidates,
+  sessionStartMs,
+  leadPointsBySession,
+  editTimesBySession,
+});
 store.exec("COMMIT");
 
 process.stdout.write(
@@ -631,5 +745,6 @@ process.stdout.write(
     `${importedResumptions} resumptions (${resolvedResumptions} resolved to a node), ` +
     `reconciled ${reconciledCompletions} async completions, ` +
     `billed ${billedNodes} agents from their transcripts, ` +
-    `pruned ${prunedHookNodes} superseded hook nodes\n`,
+    `pruned ${prunedHookNodes} superseded hook nodes, ` +
+    `linked ${recordedPullRequests} pull requests\n`,
 );

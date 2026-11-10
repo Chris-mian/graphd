@@ -16,6 +16,7 @@ import { listWorkflows, promoteWorkflow, rejectWorkflow } from "./library.mjs";
 import { runDiagnostics } from "./doctor.mjs";
 import { computeStats } from "./stats.mjs";
 import { computeTrend } from "./trend.mjs";
+import { computeOutcomes } from "./outcomereport.mjs";
 import { computeEvaluation } from "./evaluation.mjs";
 import { computeLessons } from "./lessons.mjs";
 import { acceptRule, acceptedRulesBlock, readAcceptedRules } from "./accepted.mjs";
@@ -109,6 +110,9 @@ export function routeGet(store, config, url) {
   }
   if (url.pathname === "/v1/trend") {
     return { weeks: computeTrend(store) };
+  }
+  if (url.pathname === "/v1/outcomes") {
+    return { outcomes: computeOutcomes(store) };
   }
   if (url.pathname === "/v1/lessons") {
     return { lessons: computeLessons(store) };

@@ -14,6 +14,7 @@ const MILLISECONDS_PER_HOUR = 3_600_000;
 /** Each scheduled job, and how long its log may sit untouched before the schedule is suspect. */
 const SCHEDULED_JOBS = [
   { name: "import", logPath: join(LOGS_DIR, "graphd-import.log"), maxAgeHours: 12 },
+  { name: "outcomes", logPath: join(LOGS_DIR, "graphd-outcomes.log"), maxAgeHours: 72 },
   { name: "harvest", logPath: join(LOGS_DIR, "harvest.log"), maxAgeHours: 336 },
   {
     name: "spine refresh",

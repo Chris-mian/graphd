@@ -39,6 +39,7 @@ your sessions carry on as if it were never installed.
 ```bash
 graph stats          # shape, serialized agent-time, spend by agent type and model
 graph trend          # per week: overlap, agents at once, serialized time, spend, interventions
+graph outcomes       # faster and better? per implementation mode, from the PRs each run opened
 graph decisions      # proposals waiting on your accept/reject
 graph decide <id> accepted|rejected
 graph lessons        # interventions, autonomy trend, where autonomy broke
