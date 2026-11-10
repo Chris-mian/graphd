@@ -115,6 +115,17 @@ export function pickOriginal(candidates, sessionStartMs) {
   return [...byUrl.values()];
 }
 
+/**
+ * A number or string field from the head of a workflow's result JSON. Results are stored cut at a
+ * fixed length, so a long one is no longer parseable as a whole; implement-verify puts its counts
+ * and mode first.
+ */
+export function resultField(resultText, field) {
+  const match = new RegExp(`"${field}"\\s*:\\s*("([^"]*)"|(-?\\d+(?:\\.\\d+)?))`).exec(resultText ?? "");
+  if (!match) return null;
+  return match[2] ?? Number(match[3]);
+}
+
 /** The `mode` a Workflow call's args name, whether args arrived as an object or a JSON string. */
 export function workflowModeFromInput(input) {
   let args = input?.args;

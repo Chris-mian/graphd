@@ -3,6 +3,8 @@
  * of it. A session's arm is the mode its implement-verify runs used.
  */
 
+import { resultField } from "./prlinks.mjs";
+
 /** The parallel-implementation trial alternates arms from this day on. */
 export const TRIAL_START = "2026-11-10";
 /** Below this many PRs an arm's averages are noise, and are labelled so. */
@@ -21,13 +23,6 @@ const UNIT_BUCKETS = [
 const MILLISECONDS_PER_MINUTE = 60_000;
 const HUMAN_KINDS = ["interrupt", "correction"];
 
-function parseJson(text) {
-  try {
-    return JSON.parse(text ?? "");
-  } catch {
-    return null;
-  }
-}
 
 /** Each session's arm, widest implement-verify run, and surviving findings per unit. */
 function sessionWorkflowFacts(store) {
@@ -41,11 +36,12 @@ function sessionWorkflowFacts(store) {
   for (const row of rows) {
     const fact = facts.get(row.session_id) ?? { modes: new Set(), unitCount: 0, units: 0, surviving: 0 };
     fact.modes.add(row.workflow_mode);
-    const result = parseJson(row.result_text);
-    if (Number.isFinite(result?.unitCount) && Number.isFinite(result?.findingsSurviving)) {
-      fact.unitCount = Math.max(fact.unitCount, result.unitCount);
-      fact.units += result.unitCount;
-      fact.surviving += result.findingsSurviving;
+    const unitCount = resultField(row.result_text, "unitCount");
+    const findingsSurviving = resultField(row.result_text, "findingsSurviving");
+    if (Number.isFinite(unitCount) && Number.isFinite(findingsSurviving)) {
+      fact.unitCount = Math.max(fact.unitCount, unitCount);
+      fact.units += unitCount;
+      fact.surviving += findingsSurviving;
     }
     facts.set(row.session_id, fact);
   }

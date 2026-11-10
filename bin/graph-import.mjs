@@ -11,7 +11,7 @@ import {
   recordTaskCompletion,
 } from "../src/db.mjs";
 import { activityPoints, countWorkflowAgents, readWorkflowChildren, unionMs } from "../src/workflowchildren.mjs";
-import { activeMsToOpen, editTimes, pickOriginal, pullRequestsIn, workflowModeFromInput } from "../src/prlinks.mjs";
+import { activeMsToOpen, editTimes, pickOriginal, pullRequestsIn, resultField, workflowModeFromInput } from "../src/prlinks.mjs";
 import {
   aggregateUsage,
   assistantMessageIds,
@@ -525,14 +525,10 @@ function insertIntervention(store, intervention) {
 const IMPLEMENT_VERIFY_LABEL = "implement-verify";
 const DEFAULT_WORKFLOW_MODE = "verify-only";
 
-/** The `mode` an implement-verify result reports, when its result is the workflow's return JSON. */
+/** The `mode` an implement-verify result reports. */
 function modeFromResultText(resultText) {
-  try {
-    const mode = JSON.parse(resultText ?? "")?.mode;
-    return typeof mode === "string" ? mode : null;
-  } catch {
-    return null;
-  }
+  const mode = resultField(resultText, "mode");
+  return typeof mode === "string" ? mode : null;
 }
 
 /**
