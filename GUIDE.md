@@ -206,7 +206,7 @@ Then run `/lesson-harvest` in a session. It writes a report to
 graph accept "Never attribute a test failure to flakiness without re-running it in isolation."
 ```
 
-**The number to watch is interventions per session**, the last column of `graph trend` (W38 0.09,
+**The number to watch is interventions per session**, the `human/session` column of `graph trend` (W38 0.09,
 W39 0.44). That's the
 autonomy metric — how often a run needed you. A harvest that doesn't plausibly lower it did nothing.
 

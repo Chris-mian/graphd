@@ -39,6 +39,9 @@ graph health            daemon status
 
 `requireTopologyBeyondNAgents` — spawning a third `Agent` in a run that has declared no topology
 is denied. Threshold is `rules.requireTopologyBeyondNAgents.threshold` in `config.json`.
+Agent types in `TOPOLOGY_EXEMPT_AGENT_TYPES` (`src/policy.mjs`: `Explore`, the pressure-testers,
+and other types with no Edit/Write tool) are never denied and never counted, so a research
+fan-out of `Explore` agents needs no topology. `general-purpose` still counts.
 
 `Workflow` spawns are never denied: a workflow script is itself a declared topology.
 
@@ -73,7 +76,7 @@ A spawn is allowed whenever anything is off-nominal. All of these are tested:
 Shadow mode (`enforce: false`) records every would-deny. `graph checks` is how you read the
 false-positive rate before turning blocking on.
 
-`test/policy.test.mjs` covers the rule itself — threshold, Workflow exemption, shadow recording,
+`test/policy.test.mjs` covers the rule itself — threshold, Workflow and agent-type exemptions, shadow recording,
 and the topology check. The hook's own fail-open paths are exercised by hand, not by the suite.
 
 ## Hooks

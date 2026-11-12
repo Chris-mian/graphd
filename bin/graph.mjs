@@ -147,6 +147,11 @@ function formatUsd(amount) {
   return `$${amount.toFixed(2)}`;
 }
 
+/** A 0..1 share as a whole percent, or "-" when there was nothing to divide. */
+function formatPercent(share) {
+  return share == null ? "-" : `${Math.round(share * 100)}%`;
+}
+
 const PROJECT_ROWS = 8;
 
 /** Spend per project, as far as spine attributed the sessions that produced it. */
@@ -229,9 +234,12 @@ function printStats(stats) {
   }
 }
 
-/** One row per week; parallel is "ran in parallel / used 2+ agents". */
+/**
+ * One row per week; parallel is "ran in parallel / used 2+ agents", batched is the share of the
+ * lead's tool calls issued two or more to a message.
+ */
 function printTrend(weeks) {
-  process.stdout.write("week       runs  parallel  avg-conc  serialized  declared  spend    human/session\n");
+  process.stdout.write("week       runs  parallel  avg-conc  serialized  declared  spend    human/session  batched\n");
   for (const week of weeks) {
     const perSession = week.humanInterventionsPerSession;
     process.stdout.write(
@@ -241,7 +249,8 @@ function printTrend(weeks) {
         `${formatMinutes(week.serializedMs).padStart(10)}  ` +
         `${`${week.declaredRuns}/${week.multiAgentRuns}`.padStart(8)}  ` +
         `${formatUsd(week.costUsd).padStart(7)}  ` +
-        `${perSession == null ? "-" : perSession.toFixed(2)}\n`,
+        `${(perSession == null ? "-" : perSession.toFixed(2)).padStart(13)}  ` +
+        `${formatPercent(week.batchedShare).padStart(7)}\n`,
     );
   }
 }
@@ -353,7 +362,9 @@ function printArmRows(rows) {
     process.stdout.write("  no PRs yet\n");
     return;
   }
-  process.stdout.write("  arm           PRs  sessions  work-min  merged  review-commits  followups  fix-followups  reverted  findings/unit  human/session\n");
+  process.stdout.write(
+    "  arm           PRs  sessions  work-min  merged  review-commits  followups  fix-followups  reverted  findings/unit  human/session  batched\n",
+  );
   for (const row of rows) {
     process.stdout.write(
       `  ${row.arm.padEnd(12)}  ${String(row.prCount).padStart(3)}  ${String(row.sessionCount).padStart(8)}  ` +
@@ -362,7 +373,8 @@ function printArmRows(rows) {
         `${formatFigure(row.commitsAfterOpen, 2).padStart(14)}  ` +
         `${formatFigure(row.followupsPerMerged, 2).padStart(9)}  ${formatFigure(row.fixFollowupsPerMerged, 2).padStart(13)}  ` +
         `${String(row.revertedCount).padStart(8)}  ${formatFigure(row.survivingFindingsPerUnit, 2).padStart(13)}  ` +
-        `${formatFigure(row.humanPerSession, 2).padStart(13)}${row.isTooFew ? "  (too few PRs)" : ""}\n`,
+        `${formatFigure(row.humanPerSession, 2).padStart(13)}  ${formatPercent(row.batchedShare).padStart(7)}` +
+        `${row.isTooFew ? "  (too few PRs)" : ""}\n`,
     );
   }
 }
@@ -379,7 +391,8 @@ function printOutcomes(outcomes) {
   process.stdout.write(
     `\nwork-min: median active lead minutes, first edit to PR open. review-commits: commits made\n` +
       `after the PR opened. followups: later commits by the author on the PR's files within 7 days\n` +
-      `of merge, not counting PRs already open when it merged. ${outcomes.pendingCount} PRs not yet final, ` +
+      `of merge, not counting PRs already open when it merged. batched: share of the lead's tool calls,\n` +
+      `over the arm's sessions, issued two or more to one message. ${outcomes.pendingCount} PRs not yet final, ` +
       `${outcomes.unfetchedCount} never fetched, ${outcomes.erroredCount} failed their last fetch.\n`,
   );
 }

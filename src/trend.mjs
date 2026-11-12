@@ -1,3 +1,4 @@
+import { batchedShare } from "./batching.mjs";
 import { autonomyTrend } from "./lessons.mjs";
 import { selectRunsWithNodes, summarizeRun } from "./stats.mjs";
 
@@ -19,8 +20,8 @@ function emptyWeek(week) {
 
 /**
  * Parallelism, waste and spend per week, over the same `%Y-W%W` weeks `graph lessons` uses, with
- * that series' human interventions per session alongside. A run falls in the week it started; a
- * week with sessions but no runs is listed with zero runs.
+ * that series' human interventions per session and the lead's tool-call batching alongside. A run
+ * falls in the week it started; a week with sessions but no runs is listed with zero runs.
  */
 export function computeTrend(store) {
   const weekOf = store.prepare("SELECT strftime('%Y-W%W', ?) AS week");
@@ -45,9 +46,19 @@ export function computeTrend(store) {
   for (const week of autonomyByWeek.keys()) if (!weeks.has(week)) weeks.set(week, emptyWeek(week));
   return [...weeks.values()]
     .sort((left, right) => left.week.localeCompare(right.week))
-    .map(({ agentMs, busyMs, ...bucket }) => ({
-      ...bucket,
-      averageConcurrency: busyMs > 0 ? agentMs / busyMs : null,
-      humanInterventionsPerSession: autonomyByWeek.get(bucket.week)?.perSession ?? null,
-    }));
+    .map(({ agentMs, busyMs, ...bucket }) => {
+      const autonomy = autonomyByWeek.get(bucket.week);
+      const batching = {
+        toolCalls: autonomy?.toolCalls ?? 0,
+        batchedCalls: autonomy?.batchedCalls ?? 0,
+        serialReadCalls: autonomy?.serialReadCalls ?? 0,
+      };
+      return {
+        ...bucket,
+        averageConcurrency: busyMs > 0 ? agentMs / busyMs : null,
+        humanInterventionsPerSession: autonomy?.perSession ?? null,
+        ...batching,
+        batchedShare: batchedShare(batching),
+      };
+    });
 }

@@ -3,9 +3,14 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { RULE_REQUIRE_TOPOLOGY, decideSpawn, evaluateSpawn } from "../src/policy.mjs";
+import {
+  RULE_REQUIRE_TOPOLOGY,
+  TOPOLOGY_EXEMPT_AGENT_TYPES,
+  decideSpawn,
+  evaluateSpawn,
+} from "../src/policy.mjs";
 import { isTopologySubstantive, recordTopology, upsertRun } from "../src/db.mjs";
-import { handleTopology } from "../src/routes.mjs";
+import { handlePolicyCheck, handleTopology } from "../src/routes.mjs";
 
 const RUN_ID = "run-policy";
 const THRESHOLD = 2;
@@ -41,6 +46,18 @@ function spawnAgents(store, count) {
          VALUES (?, ?, 'Agent', datetime('now'), 'ok')`,
       )
       .run(`hook-node-${index}`, RUN_ID);
+  }
+}
+
+/** Adds `count` live-hook Agent nodes of `agentType`; ids are prefixed so calls never collide. */
+function spawnAgentsOfType(store, count, agentType, idPrefix = agentType) {
+  for (let index = 0; index < count; index += 1) {
+    store
+      .prepare(
+        `INSERT INTO nodes (id, run_id, tool, agent_type, started_at, status)
+         VALUES (?, ?, 'Agent', ?, datetime('now'), 'ok')`,
+      )
+      .run(`hook-${idPrefix}-${index}`, RUN_ID, agentType);
   }
 }
 
@@ -181,5 +198,68 @@ test("agents a Workflow ran do not count toward the gate", () => {
   assert.equal(
     evaluateSpawn(store, ENFORCING_CONFIG, { runId: RUN_ID, tool: "Agent" }).wouldDeny,
     false,
+  );
+});
+
+test("an exempt agent type is never denied, even past the threshold", () => {
+  const store = freshStore();
+  spawnAgents(store, THRESHOLD + 3);
+  for (const agentType of TOPOLOGY_EXEMPT_AGENT_TYPES) {
+    assert.equal(
+      evaluateSpawn(store, ENFORCING_CONFIG, { runId: RUN_ID, tool: "Agent", agentType }).wouldDeny,
+      false,
+      agentType,
+    );
+  }
+});
+
+test("exempt spawns do not count toward the threshold", () => {
+  const store = freshStore();
+  spawnAgentsOfType(store, 2, "Explore");
+  spawnAgentsOfType(store, 1, "", "general-a");
+  assert.equal(
+    evaluateSpawn(store, ENFORCING_CONFIG, { runId: RUN_ID, tool: "Agent", agentType: "" }).wouldDeny,
+    false,
+  );
+  spawnAgentsOfType(store, 1, "", "general-b");
+  assert.equal(
+    evaluateSpawn(store, ENFORCING_CONFIG, { runId: RUN_ID, tool: "Agent", agentType: "" }).wouldDeny,
+    true,
+  );
+});
+
+test("a general-purpose spawn past the threshold is still denied", () => {
+  const store = freshStore();
+  spawnAgentsOfType(store, THRESHOLD, "general-purpose");
+  const verdict = evaluateSpawn(store, ENFORCING_CONFIG, {
+    runId: RUN_ID,
+    tool: "Agent",
+    agentType: "general-purpose",
+  });
+  assert.equal(verdict.wouldDeny, true);
+  assert.match(verdict.reason, /use `Explore`/);
+});
+
+test("a missing agentType behaves as before: counted and denied past the threshold", () => {
+  const store = freshStore();
+  spawnAgentsOfType(store, THRESHOLD, null, "untyped");
+  assert.equal(
+    evaluateSpawn(store, ENFORCING_CONFIG, { runId: RUN_ID, tool: "Agent" }).wouldDeny,
+    true,
+  );
+});
+
+test("the policy check stores the agent type it was asked about", () => {
+  const store = freshStore();
+  handlePolicyCheck(store, ENFORCING_CONFIG, {
+    sessionId: RUN_ID,
+    tool: "Agent",
+    agentType: "Explore",
+  });
+  decideSpawn(store, ENFORCING_CONFIG, { runId: RUN_ID, tool: "Agent" });
+  const rows = store.prepare("SELECT agent_type FROM policy_checks ORDER BY id").all();
+  assert.deepEqual(
+    rows.map((row) => row.agent_type),
+    ["Explore", null],
   );
 });

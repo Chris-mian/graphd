@@ -3,6 +3,7 @@
  * of it. A session's arm is the mode its implement-verify runs used.
  */
 
+import { batchedShare } from "./batching.mjs";
 import { resultField } from "./prlinks.mjs";
 
 /** The parallel-implementation trial alternates arms from this day on. */
@@ -71,8 +72,13 @@ function mean(values) {
 }
 
 /** One arm's speed and outcome figures over its PRs and the sessions that opened them. */
-function summarizeArm(arm, pullRequests, facts, humanBySession) {
+function summarizeArm(arm, pullRequests, facts, humanBySession, batchingBySession) {
   const sessions = [...new Set(pullRequests.map((pullRequest) => pullRequest.session_id))];
+  const batching = { toolCalls: 0, batchedCalls: 0 };
+  for (const sessionId of sessions) {
+    batching.toolCalls += batchingBySession.get(sessionId)?.toolCalls ?? 0;
+    batching.batchedCalls += batchingBySession.get(sessionId)?.batchedCalls ?? 0;
+  }
   const merged = pullRequests.filter((pullRequest) => pullRequest.state === "MERGED");
   const settled = merged.filter((pullRequest) => pullRequest.followup_commits != null);
   const units = sessions.reduce((sum, sessionId) => sum + (facts.get(sessionId)?.units ?? 0), 0);
@@ -92,7 +98,14 @@ function summarizeArm(arm, pullRequests, facts, humanBySession) {
     revertedCount: settled.filter((pullRequest) => pullRequest.reverted === 1).length,
     survivingFindingsPerUnit: units > 0 ? surviving / units : null,
     humanPerSession: sessions.length ? sessions.reduce((sum, sessionId) => sum + (humanBySession.get(sessionId) ?? 0), 0) / sessions.length : null,
+    batchedShare: batchedShare(batching),
   };
+}
+
+/** Each session's lead tool calls and how many of them were batched. */
+function batchingBySessionId(store) {
+  const rows = store.prepare("SELECT id, tool_calls AS toolCalls, batched_calls AS batchedCalls FROM sessions").all();
+  return new Map(rows.map((row) => [row.id, row]));
 }
 
 function humanCountsBySession(store) {
@@ -103,10 +116,12 @@ function humanCountsBySession(store) {
   return new Map(rows.map((row) => [row.run_id, row.humanCount]));
 }
 
-function armTable(pullRequests, facts, humanBySession) {
+function armTable(pullRequests, facts, humanBySession, batchingBySession) {
   const byArm = new Map(ARMS.map((arm) => [arm, []]));
   for (const pullRequest of pullRequests) byArm.get(armOf(facts.get(pullRequest.session_id))).push(pullRequest);
-  return ARMS.map((arm) => summarizeArm(arm, byArm.get(arm), facts, humanBySession)).filter((row) => row.prCount > 0);
+  return ARMS.map((arm) => summarizeArm(arm, byArm.get(arm), facts, humanBySession, batchingBySession)).filter(
+    (row) => row.prCount > 0,
+  );
 }
 
 /**
@@ -130,9 +145,10 @@ function nextArm(facts) {
 export function computeOutcomes(store) {
   const facts = sessionWorkflowFacts(store);
   const humanBySession = humanCountsBySession(store);
+  const batchingBySession = batchingBySessionId(store);
   const pullRequests = store.prepare("SELECT * FROM prs ORDER BY opened_at").all();
   const inTrial = pullRequests.filter((pullRequest) => pullRequest.opened_at >= TRIAL_START);
-  const trialArms = armTable(inTrial, facts, humanBySession);
+  const trialArms = armTable(inTrial, facts, humanBySession, batchingBySession);
   const byWidth = UNIT_BUCKETS.map((bucket) => ({
     bucket: bucket.label,
     arms: armTable(
@@ -142,11 +158,12 @@ export function computeOutcomes(store) {
       }),
       facts,
       humanBySession,
+      batchingBySession,
     ),
   }));
   return {
     trialStart: TRIAL_START,
-    allTime: armTable(pullRequests, facts, humanBySession),
+    allTime: armTable(pullRequests, facts, humanBySession, batchingBySession),
     trial: trialArms,
     byWidth,
     nextArm: nextArm(facts),

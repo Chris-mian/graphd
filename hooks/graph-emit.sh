@@ -96,7 +96,8 @@ if [ "$hook_event" = "PostToolUse" ]; then
 fi
 
 check_body="$(jq -nc --arg sessionId "$session_id" --arg cwd "$session_cwd" --arg tool "$tool_name" \
-  '{sessionId: $sessionId, cwd: $cwd, tool: $tool}')"
+  --arg agentType "$agent_type" \
+  '{sessionId: $sessionId, cwd: $cwd, tool: $tool, agentType: $agentType}')"
 decision_json="$(post_json /v1/policy/check "$check_body")"
 
 spawn_body="$(jq -nc \
