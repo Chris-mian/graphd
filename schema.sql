@@ -98,7 +98,9 @@ CREATE TABLE IF NOT EXISTS policy_checks (
   rule       TEXT,
   would_deny INTEGER NOT NULL DEFAULT 0,
   enforced   INTEGER NOT NULL DEFAULT 0,
-  reason     TEXT
+  reason     TEXT,
+  -- subagent_type of the spawn being checked; '' for the default (general-purpose).
+  agent_type TEXT
 );
 
 CREATE INDEX IF NOT EXISTS policy_checks_ts_idx ON policy_checks (ts DESC);
@@ -134,7 +136,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   ended_at   TEXT,
   -- Assistant turns. Wall-clock between first and last message is not work time: a resumed
   -- session counts the days it sat idle, which put one week at 1271 hours across 2 sessions.
-  turn_count INTEGER NOT NULL DEFAULT 0
+  turn_count INTEGER NOT NULL DEFAULT 0,
+  -- Lead tool calls, grouped by assistant message.id. batched_calls = calls in a message that
+  -- issued 2+ tool calls at once; serial_read_calls = calls in runs of 3+ consecutive
+  -- single-call messages whose one call was a read. See src/batching.mjs.
+  tool_calls        INTEGER NOT NULL DEFAULT 0,
+  batched_calls     INTEGER NOT NULL DEFAULT 0,
+  serial_read_calls INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS sessions_started_idx ON sessions (started_at DESC);
