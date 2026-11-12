@@ -25,7 +25,14 @@ const NODE_RESULT_COLUMNS = [
   ["workflow_mode", "TEXT"],
 ];
 
-const SESSION_COLUMNS = [["turn_count", "INTEGER NOT NULL DEFAULT 0"]];
+const SESSION_COLUMNS = [
+  ["turn_count", "INTEGER NOT NULL DEFAULT 0"],
+  ["tool_calls", "INTEGER NOT NULL DEFAULT 0"],
+  ["batched_calls", "INTEGER NOT NULL DEFAULT 0"],
+  ["serial_read_calls", "INTEGER NOT NULL DEFAULT 0"],
+];
+
+const POLICY_CHECK_COLUMNS = [["agent_type", "TEXT"]];
 
 const INTERVENTION_COLUMNS = [
   ["preceding_detail", "TEXT"],
@@ -56,6 +63,7 @@ export function openStore(databasePath = DB_PATH) {
   migrateColumns(store, "nodes", NODE_RESULT_COLUMNS);
   migrateColumns(store, "sessions", SESSION_COLUMNS);
   migrateColumns(store, "interventions", INTERVENTION_COLUMNS);
+  migrateColumns(store, "policy_checks", POLICY_CHECK_COLUMNS);
   return store;
 }
 
@@ -273,7 +281,15 @@ export function recordTopology(store, { runId, topology }) {
  * A session can stay alive for days; counting its whole history would deny a fresh fan-out on the
  * strength of agents that finished last week.
  */
-export function countRecentAgentNodes(store, runId, windowMinutes) {
+/**
+ * Agent spawns in the run within the window, not counting agent types in exemptAgentTypes
+ * (the default type is stored as NULL or '' and is never exempt).
+ */
+export function countRecentAgentNodes(store, runId, windowMinutes, exemptAgentTypes = []) {
+  const exemptPlaceholders = exemptAgentTypes.map(() => "?").join(", ");
+  const exemptClause = exemptAgentTypes.length
+    ? `AND COALESCE(agent_type, '') NOT IN (${exemptPlaceholders})`
+    : "";
   const row = store
     .prepare(
       // julianday on both sides: started_at is ISO-with-T, datetime('now') is space-separated,
@@ -284,9 +300,10 @@ export function countRecentAgentNodes(store, runId, windowMinutes) {
       `SELECT COUNT(*) AS agentNodeCount FROM nodes
         WHERE run_id = ? AND tool = 'Agent' AND parent_node_id IS NULL
           AND id NOT LIKE 'toolu\\_%' ESCAPE '\\'
-          AND julianday(started_at) >= julianday('now', ?)`,
+          AND julianday(started_at) >= julianday('now', ?)
+          ${exemptClause}`,
     )
-    .get(runId, `-${windowMinutes} minutes`);
+    .get(runId, `-${windowMinutes} minutes`, ...exemptAgentTypes);
   return row?.agentNodeCount ?? 0;
 }
 
@@ -358,8 +375,9 @@ export function resumptionsForRun(store, runId) {
 export function recordPolicyCheck(store, check) {
   store
     .prepare(
-      `INSERT INTO policy_checks (ts, session_id, run_id, tool, rule, would_deny, enforced, reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO policy_checks
+         (ts, session_id, run_id, tool, rule, would_deny, enforced, reason, agent_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       nowIso(),
@@ -370,5 +388,6 @@ export function recordPolicyCheck(store, check) {
       check.wouldDeny ? 1 : 0,
       check.isEnforced ? 1 : 0,
       check.reason ?? null,
+      check.agentType ?? null,
     );
 }

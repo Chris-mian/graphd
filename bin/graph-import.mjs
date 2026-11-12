@@ -20,6 +20,7 @@ import {
   subagentMeta,
 } from "../src/transcriptusage.mjs";
 import { parseTaskNotifications } from "../src/tasknotify.mjs";
+import { leadBatching } from "../src/batching.mjs";
 import {
   INTERVENTION_KINDS,
   classifyAssistantText,
@@ -260,6 +261,7 @@ function parseTranscript(path) {
       }
     }
   }
+  Object.assign(session, leadBatching(entries));
   return { session, spawns, resultsByToolUseId, interventions, resumptions, entries };
 }
 
@@ -533,14 +535,28 @@ function hasRunningChild(store, parentNodeId) {
 function upsertSession(store, session) {
   store
     .prepare(
-      `INSERT INTO sessions (id, cwd, started_at, ended_at, turn_count)
-       VALUES (?, ?, ?, ?, ?)
+      // MAX, like turn_count: a transcript read part-written or trimmed never lowers a count.
+      `INSERT INTO sessions
+         (id, cwd, started_at, ended_at, turn_count, tool_calls, batched_calls, serial_read_calls)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET
-         cwd        = COALESCE(excluded.cwd, sessions.cwd),
-         ended_at   = MAX(COALESCE(sessions.ended_at, ''), COALESCE(excluded.ended_at, '')),
-         turn_count = MAX(sessions.turn_count, excluded.turn_count)`,
+         cwd               = COALESCE(excluded.cwd, sessions.cwd),
+         ended_at          = MAX(COALESCE(sessions.ended_at, ''), COALESCE(excluded.ended_at, '')),
+         turn_count        = MAX(sessions.turn_count, excluded.turn_count),
+         tool_calls        = MAX(sessions.tool_calls, excluded.tool_calls),
+         batched_calls     = MAX(sessions.batched_calls, excluded.batched_calls),
+         serial_read_calls = MAX(sessions.serial_read_calls, excluded.serial_read_calls)`,
     )
-    .run(session.id, session.cwd, session.startedAt, session.endedAt, session.turnCount);
+    .run(
+      session.id,
+      session.cwd,
+      session.startedAt,
+      session.endedAt,
+      session.turnCount,
+      session.toolCalls ?? 0,
+      session.batchedCalls ?? 0,
+      session.serialReadCalls ?? 0,
+    );
 }
 
 function insertIntervention(store, intervention) {

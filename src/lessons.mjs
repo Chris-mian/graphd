@@ -3,7 +3,8 @@ const TOP_LIST_LENGTH = 8;
 
 /**
  * Interventions per session, by week. `perSession` is the autonomy metric and counts
- * interrupts and corrections only; self-corrections get their own series.
+ * interrupts and corrections only; self-corrections get their own series. Also the week's lead
+ * tool calls, batched calls and serial read calls, summed over its sessions.
  *
  * The denominator is every session that week, taken from `sessions`. Counting distinct
  * `run_id` within `interventions` would exclude clean sessions, so the rate could never fall
@@ -13,7 +14,10 @@ export function autonomyTrend(store) {
   return store
     .prepare(
       `WITH weekly_sessions AS (
-         SELECT strftime('%Y-W%W', started_at) AS week, COUNT(*) AS sessionCount
+         SELECT strftime('%Y-W%W', started_at) AS week, COUNT(*) AS sessionCount,
+                SUM(tool_calls) AS toolCalls,
+                SUM(batched_calls) AS batchedCalls,
+                SUM(serial_read_calls) AS serialReadCalls
            FROM sessions
           GROUP BY week
        ),
@@ -28,6 +32,9 @@ export function autonomyTrend(store) {
        )
        SELECT weekly_sessions.week AS week,
               weekly_sessions.sessionCount AS sessionCount,
+              weekly_sessions.toolCalls AS toolCalls,
+              weekly_sessions.batchedCalls AS batchedCalls,
+              weekly_sessions.serialReadCalls AS serialReadCalls,
               COALESCE(weekly_interventions.interventionCount, 0) AS interventionCount,
               COALESCE(weekly_interventions.interruptCount, 0) AS interruptCount,
               COALESCE(weekly_interventions.correctionCount, 0) AS correctionCount,

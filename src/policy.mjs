@@ -7,6 +7,23 @@ const WORKFLOW_TOOL = "Workflow";
 const AGENT_TOOL = "Agent";
 const DEFAULT_WINDOW_MINUTES = 30;
 
+/**
+ * Agent types the topology gate never denies and never counts toward its threshold. These are
+ * agent definitions with no Edit/Write tool (several do carry Bash), so they gather or review
+ * rather than implement. An empty or missing type is general-purpose and is not exempt.
+ */
+export const TOPOLOGY_EXEMPT_AGENT_TYPES = [
+  "Explore",
+  "Plan",
+  "web-fetch",
+  "claude-code-guide",
+  "caveman:cavecrew-investigator",
+  "caveman:cavecrew-reviewer",
+  "plan-pressure-tester",
+  "impl-pressure-tester",
+  "tracker-consulter-perms-v2",
+];
+
 /** The one-liner that satisfies this rule, quoted for a shell and shared with the CLI usage text. */
 export const TOPOLOGY_COMMAND_EXAMPLE = `graph topology '${JSON.stringify({
   shape: "pipeline",
@@ -17,6 +34,7 @@ export const TOPOLOGY_COMMAND_EXAMPLE = `graph topology '${JSON.stringify({
 
 const DENY_REASON_TEMPLATE = [
   "graphd: {agentCount} agents spawned in the last {windowMinutes} minutes with no declared topology.",
+  "Research/gathering fan-out should use `Explore` (one per source, spawned in one message), which never needs a topology.",
   "",
   "Declare the shape before spawning more. Emit a TOPOLOGY block naming, for every edge,",
   "the artifact that crosses it — a variable, file, or list. An edge that carries nothing",
@@ -38,8 +56,9 @@ const DENY_REASON_TEMPLATE = [
 /**
  * Evaluates the spawn against the single topology rule.
  * Workflow spawns are never denied: a workflow script is itself a declared topology.
+ * Spawns of a TOPOLOGY_EXEMPT_AGENT_TYPES type are never denied and never counted.
  */
-export function evaluateSpawn(store, config, { runId, tool }) {
+export function evaluateSpawn(store, config, { runId, tool, agentType }) {
   const rule = config.rules?.[RULE_REQUIRE_TOPOLOGY];
   if (!rule?.enabled) return { wouldDeny: false, rule: RULE_REQUIRE_TOPOLOGY, reason: null };
   if (tool === WORKFLOW_TOOL) {
@@ -48,9 +67,17 @@ export function evaluateSpawn(store, config, { runId, tool }) {
   if (tool !== AGENT_TOOL) {
     return { wouldDeny: false, rule: RULE_REQUIRE_TOPOLOGY, reason: null };
   }
+  if (agentType && TOPOLOGY_EXEMPT_AGENT_TYPES.includes(agentType)) {
+    return { wouldDeny: false, rule: RULE_REQUIRE_TOPOLOGY, reason: null };
+  }
 
   const windowMinutes = rule.windowMinutes ?? DEFAULT_WINDOW_MINUTES;
-  const agentCount = countRecentAgentNodes(store, runId, windowMinutes);
+  const agentCount = countRecentAgentNodes(
+    store,
+    runId,
+    windowMinutes,
+    TOPOLOGY_EXEMPT_AGENT_TYPES,
+  );
   if (agentCount < rule.threshold) {
     return { wouldDeny: false, rule: RULE_REQUIRE_TOPOLOGY, reason: null };
   }
@@ -79,6 +106,7 @@ export function decideSpawn(store, config, request) {
     sessionId: request.sessionId,
     runId: request.runId,
     tool: request.tool,
+    agentType: request.agentType,
     rule: verdict.rule,
     wouldDeny: verdict.wouldDeny,
     isEnforced,

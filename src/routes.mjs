@@ -116,7 +116,12 @@ export function handleResumption(store, body) {
 export function handlePolicyCheck(store, config, body) {
   const runId = resolveRunId(body);
   upsertRun(store, { runId, sessionId: body.sessionId, cwd: body.cwd });
-  return decideSpawn(store, config, { runId, sessionId: body.sessionId, tool: body.tool });
+  return decideSpawn(store, config, {
+    runId,
+    sessionId: body.sessionId,
+    tool: body.tool,
+    agentType: body.agentType,
+  });
 }
 
 export function handleEvent(store, config, body) {
